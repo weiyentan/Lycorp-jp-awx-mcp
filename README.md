@@ -454,6 +454,38 @@ Send natural language requests to your MCP client (Claude, etc.) and the server 
 -> relaunch_job(job_id=123)
 ```
 
+### Prompt on Launch configuration (job templates)
+
+Use the optional `ask_variables_on_launch` argument on `create_job_template` and
+`update_job_template` to control whether AWX allows launch-time `extra_vars`
+overrides for a template. This is AWX **Prompt on Launch** template
+configuration. It is not an MCP prompt, it stores no values, and it is not an
+AWX **survey** (surveys remain managed by `get/set/delete_job_template_survey`).
+It does not set default `extra_vars`: `launch_job(extra_vars=...)` still sends
+the values at run time, and the flag only authorises them.
+
+```
+"Allow extra variables to be supplied when launching the Deploy App template"
+-> update_job_template(template_id=5, ask_variables_on_launch=True)
+
+"Stop allowing launch-time extra variables on Deploy App"
+-> update_job_template(template_id=5, ask_variables_on_launch=False)
+```
+
+Tri-state semantics: `True` enables, `False` disables, and omitting the
+argument leaves the AWX default on create (or the current value on update). An
+explicit `False` is submitted, never treated as omission.
+
+Before writing, the tool queries the AWX `OPTIONS` metadata for the create or
+update endpoint and confirms the field is writable for this AWX instance. If
+the check is unsupported, missing or ambiguous, the whole request is rejected
+and **no write is attempted**. After an accepted write, the tool reads the
+template back and returns the persisted data; if persistence cannot be
+verified, it reports the expected/observed values and warns that the write may
+already have taken effect (no automatic rollback). Calls that omit the argument
+keep the previous single-request behaviour with no `OPTIONS` or verification
+`GET`.
+
 ### Projects and SCM
 
 ```
