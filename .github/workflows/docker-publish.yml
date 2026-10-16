@@ -42,7 +42,7 @@ jobs:
             type=semver,pattern={{major}}
           labels: |
             org.opencontainers.image.title=AWX MCP Server
-            org.opencontainers.image.description=MCP server for AWX/Ansible Tower
+            org.opencontainers.image.description=MCP server for AWX
 
       - name: Log in to GHCR
         if: github.event_name != 'pull_request'
