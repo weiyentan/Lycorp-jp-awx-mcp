@@ -41,6 +41,16 @@ def _prompt_launch_failure(
     return json.dumps(payload, indent=2)
 
 
+def _collect_prompt_on_launch_flags(**flags: bool | None) -> dict[str, bool]:
+    """Return only the explicitly supplied Prompt on Launch flags.
+
+    ``True`` enables and ``False`` disables; omitted (``None``) entries are not
+    returned so they are neither validated nor submitted. An explicit ``False``
+    is preserved and never treated as omission.
+    """
+    return {name: value for name, value in flags.items() if value is not None}
+
+
 def _check_prompt_on_launch_capability(
     client: Any, endpoint: str, action: str, fields: list[str]
 ) -> str | None:
@@ -200,6 +210,14 @@ def create_job_template(
     allow_simultaneous: bool = False,
     timeout: int = 0,
     ask_variables_on_launch: bool = None,
+    ask_credential_on_launch: bool = None,
+    ask_inventory_on_launch: bool = None,
+    ask_limit_on_launch: bool = None,
+    ask_scm_branch_on_launch: bool = None,
+    ask_tags_on_launch: bool = None,
+    ask_skip_tags_on_launch: bool = None,
+    ask_verbosity_on_launch: bool = None,
+    ask_diff_mode_on_launch: bool = None,
 ) -> str:
     """Create an AWX job template for single playbook execution.
 
@@ -208,12 +226,14 @@ def create_job_template(
     with associate_credential_with_template after creation.
     For multi-step orchestration definitions, use create_workflow_template instead.
 
-    Prompt on Launch (tri-state): when ask_variables_on_launch is True or False
-    the tool first confirms via AWX OPTIONS metadata that the field is writable
-    for create, sends exactly one POST, then reads the template back to verify
-    the persisted value. This flag only authorises launch-time extra_vars; it
-    is not an AWX survey and does not set default extra_vars. Omitted leaves
-    the AWX default.
+    Prompt on Launch (tri-state): the ask_*_on_launch arguments below follow a
+    single pattern. Supplying True or False makes the tool confirm via AWX
+    OPTIONS metadata that every supplied field is writable for create, send
+    exactly one POST, then read the template back to verify each persisted
+    value. If any requested field is unsupported, ambiguous or non-writable,
+    the whole request is rejected before any write. These flags only authorise
+    launch-time overrides; they are not AWX surveys and store no values.
+    Omitted fields keep the AWX default.
 
     Args:
         name: Name of the job template
@@ -231,9 +251,20 @@ def create_job_template(
         diff_mode: Whether to show changes in files
         allow_simultaneous: Whether to allow simultaneous runs
         timeout: Job timeout in seconds (0 for no timeout)
-        ask_variables_on_launch: Prompt on Launch for extra variables. True
-            enables, False disables, omitted leaves the AWX default. Explicit
-            values are capability-checked before writing and verified after.
+        ask_variables_on_launch: Prompt for extra variables at launch. True
+            enables, False disables, omitted keeps the AWX default.
+        ask_credential_on_launch: Prompt for credentials at launch. This
+            configures permission to override credentials, not the credential
+            values themselves.
+        ask_inventory_on_launch: Prompt for inventory at launch. This
+            configures permission to override the inventory, not its contents.
+        ask_limit_on_launch: Prompt for host limit at launch. This configures
+            permission to override the limit, not a limit value.
+        ask_scm_branch_on_launch: Prompt for SCM branch at launch.
+        ask_tags_on_launch: Prompt for job tags at launch.
+        ask_skip_tags_on_launch: Prompt for skip tags at launch.
+        ask_verbosity_on_launch: Prompt for verbosity at launch.
+        ask_diff_mode_on_launch: Prompt for diff mode at launch.
     """
     if job_type not in ("run", "check"):
         return json.dumps(
@@ -248,13 +279,23 @@ def create_job_template(
     if error:
         return error
 
-    ask_requested = ask_variables_on_launch is not None
+    requested = _collect_prompt_on_launch_flags(
+        ask_variables_on_launch=ask_variables_on_launch,
+        ask_credential_on_launch=ask_credential_on_launch,
+        ask_inventory_on_launch=ask_inventory_on_launch,
+        ask_limit_on_launch=ask_limit_on_launch,
+        ask_scm_branch_on_launch=ask_scm_branch_on_launch,
+        ask_tags_on_launch=ask_tags_on_launch,
+        ask_skip_tags_on_launch=ask_skip_tags_on_launch,
+        ask_verbosity_on_launch=ask_verbosity_on_launch,
+        ask_diff_mode_on_launch=ask_diff_mode_on_launch,
+    )
     endpoint = "/api/v2/job_templates/"
 
     with get_ansible_client() as client:
-        if ask_requested:
+        if requested:
             error = _check_prompt_on_launch_capability(
-                client, endpoint, "POST", ["ask_variables_on_launch"]
+                client, endpoint, "POST", sorted(requested)
             )
             if error:
                 return error
@@ -275,18 +316,17 @@ def create_job_template(
             "allow_simultaneous": allow_simultaneous,
             "timeout": timeout,
         }
-        if ask_requested:
-            data["ask_variables_on_launch"] = ask_variables_on_launch
+        data.update(requested)
 
         response = client.request("POST", endpoint, data=data)
-        if not ask_requested:
+        if not requested:
             return json.dumps(response, indent=2)
         return _verify_prompt_on_launch_write(
             client,
             template_id=response.get("id") if isinstance(response, dict) else None,
             endpoint=endpoint,
             action="POST",
-            requested={"ask_variables_on_launch": ask_variables_on_launch},
+            requested=requested,
         )
 
 
@@ -308,6 +348,14 @@ def update_job_template(
     allow_simultaneous: bool = None,
     timeout: int = None,
     ask_variables_on_launch: bool = None,
+    ask_credential_on_launch: bool = None,
+    ask_inventory_on_launch: bool = None,
+    ask_limit_on_launch: bool = None,
+    ask_scm_branch_on_launch: bool = None,
+    ask_tags_on_launch: bool = None,
+    ask_skip_tags_on_launch: bool = None,
+    ask_verbosity_on_launch: bool = None,
+    ask_diff_mode_on_launch: bool = None,
 ) -> str:
     """Update an existing AWX job template.
 
@@ -315,12 +363,14 @@ def update_job_template(
     future launch_job calls.
     For workflow orchestration template updates, use update_workflow_template instead.
 
-    Prompt on Launch (tri-state): when ask_variables_on_launch is True or False
-    the tool first confirms via AWX OPTIONS metadata that the field is writable
-    for update, sends exactly one PATCH, then reads the template back to verify
-    the persisted value. This flag only authorises launch-time extra_vars; it
-    is not an AWX survey and does not set default extra_vars. Omitted leaves
-    the existing value unchanged.
+    Prompt on Launch (tri-state): the ask_*_on_launch arguments below follow a
+    single pattern. Supplying True or False makes the tool confirm via AWX
+    OPTIONS metadata that every supplied field is writable for update, send
+    exactly one PATCH, then read the template back to verify each persisted
+    value. If any requested field is unsupported, ambiguous or non-writable,
+    the whole request is rejected before any write. These flags only authorise
+    launch-time overrides; they are not AWX surveys and store no values.
+    Omitted fields keep the existing value.
 
     Args:
         template_id: ID of the job template
@@ -339,9 +389,20 @@ def update_job_template(
         diff_mode: Whether to show changes in files
         allow_simultaneous: Whether to allow simultaneous runs
         timeout: Job timeout in seconds (0 for no timeout)
-        ask_variables_on_launch: Prompt on Launch for extra variables. True
-            enables, False disables, omitted keeps the current value. Explicit
-            values are capability-checked before writing and verified after.
+        ask_variables_on_launch: Prompt for extra variables at launch. True
+            enables, False disables, omitted keeps the current value.
+        ask_credential_on_launch: Prompt for credentials at launch. This
+            configures permission to override credentials, not the credential
+            values themselves.
+        ask_inventory_on_launch: Prompt for inventory at launch. This
+            configures permission to override the inventory, not its contents.
+        ask_limit_on_launch: Prompt for host limit at launch. This configures
+            permission to override the limit, not a limit value.
+        ask_scm_branch_on_launch: Prompt for SCM branch at launch.
+        ask_tags_on_launch: Prompt for job tags at launch.
+        ask_skip_tags_on_launch: Prompt for skip tags at launch.
+        ask_verbosity_on_launch: Prompt for verbosity at launch.
+        ask_diff_mode_on_launch: Prompt for diff mode at launch.
     """
     if job_type is not None and job_type not in ("run", "check"):
         return json.dumps(
@@ -356,13 +417,23 @@ def update_job_template(
         if error:
             return error
 
-    ask_requested = ask_variables_on_launch is not None
+    requested = _collect_prompt_on_launch_flags(
+        ask_variables_on_launch=ask_variables_on_launch,
+        ask_credential_on_launch=ask_credential_on_launch,
+        ask_inventory_on_launch=ask_inventory_on_launch,
+        ask_limit_on_launch=ask_limit_on_launch,
+        ask_scm_branch_on_launch=ask_scm_branch_on_launch,
+        ask_tags_on_launch=ask_tags_on_launch,
+        ask_skip_tags_on_launch=ask_skip_tags_on_launch,
+        ask_verbosity_on_launch=ask_verbosity_on_launch,
+        ask_diff_mode_on_launch=ask_diff_mode_on_launch,
+    )
     endpoint = f"/api/v2/job_templates/{template_id}/"
 
     with get_ansible_client() as client:
-        if ask_requested:
+        if requested:
             error = _check_prompt_on_launch_capability(
-                client, endpoint, "PATCH", ["ask_variables_on_launch"]
+                client, endpoint, "PATCH", sorted(requested)
             )
             if error:
                 return error
@@ -396,18 +467,17 @@ def update_job_template(
             data["allow_simultaneous"] = allow_simultaneous
         if timeout is not None:
             data["timeout"] = timeout
-        if ask_requested:
-            data["ask_variables_on_launch"] = ask_variables_on_launch
+        data.update(requested)
 
         response = client.request("PATCH", endpoint, data=data)
-        if not ask_requested:
+        if not requested:
             return json.dumps(response, indent=2)
         return _verify_prompt_on_launch_write(
             client,
             template_id=template_id,
             endpoint=endpoint,
             action="PATCH",
-            requested={"ask_variables_on_launch": ask_variables_on_launch},
+            requested=requested,
         )
 
 

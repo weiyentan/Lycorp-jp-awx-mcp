@@ -456,35 +456,59 @@ Send natural language requests to your MCP client (Claude, etc.) and the server 
 
 ### Prompt on Launch configuration (job templates)
 
-Use the optional `ask_variables_on_launch` argument on `create_job_template` and
-`update_job_template` to control whether AWX allows launch-time `extra_vars`
-overrides for a template. This is AWX **Prompt on Launch** template
-configuration. It is not an MCP prompt, it stores no values, and it is not an
-AWX **survey** (surveys remain managed by `get/set/delete_job_template_survey`).
-It does not set default `extra_vars`: `launch_job(extra_vars=...)` still sends
-the values at run time, and the flag only authorises them.
+`create_job_template` and `update_job_template` accept optional tri-state
+Prompt on Launch arguments for every native job-template flag:
+
+| Argument | Launch-time override it authorises |
+| --- | --- |
+| `ask_variables_on_launch` | `extra_vars` |
+| `ask_credential_on_launch` | credentials |
+| `ask_inventory_on_launch` | inventory |
+| `ask_limit_on_launch` | host limit |
+| `ask_scm_branch_on_launch` | SCM branch |
+| `ask_tags_on_launch` | job tags |
+| `ask_skip_tags_on_launch` | skip tags |
+| `ask_verbosity_on_launch` | verbosity |
+| `ask_diff_mode_on_launch` | diff mode |
+
+These arguments configure AWX **permission to override** at launch. They are
+not MCP prompts, store no values, and are not AWX **surveys** (surveys remain
+managed by `get/set/delete_job_template_survey`). For example,
+`ask_credential_on_launch=True` does not attach a credential,
+`ask_inventory_on_launch=True` does not choose an inventory, and
+`ask_limit_on_launch=True` does not set a limit — `launch_job(...)` still sends
+the actual value at run time and AWX accepts it only because the flag permits
+it.
 
 ```
-"Allow extra variables to be supplied when launching the Deploy App template"
--> update_job_template(template_id=5, ask_variables_on_launch=True)
+"Allow credentials to be supplied when launching the Deploy App template"
+-> update_job_template(template_id=5, ask_credential_on_launch=True)
+
+"Allow an inventory override and disable limit overrides in one request"
+-> update_job_template(
+       template_id=5,
+       ask_inventory_on_launch=True,
+       ask_limit_on_launch=False,
+   )
 
 "Stop allowing launch-time extra variables on Deploy App"
 -> update_job_template(template_id=5, ask_variables_on_launch=False)
 ```
 
-Tri-state semantics: `True` enables, `False` disables, and omitting the
-argument leaves the AWX default on create (or the current value on update). An
-explicit `False` is submitted, never treated as omission.
+Tri-state semantics: `True` enables, `False` disables, and omitting an argument
+leaves the AWX default on create (or the current value on update). An explicit
+`False` is submitted, never treated as omission. Mixed true/false requests are
+handled in a single operation.
 
 Before writing, the tool queries the AWX `OPTIONS` metadata for the create or
-update endpoint and confirms the field is writable for this AWX instance. If
-the check is unsupported, missing or ambiguous, the whole request is rejected
-and **no write is attempted**. After an accepted write, the tool reads the
-template back and returns the persisted data; if persistence cannot be
-verified, it reports the expected/observed values and warns that the write may
-already have taken effect (no automatic rollback). Calls that omit the argument
-keep the previous single-request behaviour with no `OPTIONS` or verification
-`GET`.
+update endpoint once and confirms **every** supplied flag is writable for this
+AWX instance. If any requested flag is unsupported, missing or ambiguous, the
+whole request is rejected and **no write is attempted**. After an accepted
+write (exactly one POST/PATCH), the tool reads the template back and verifies
+every supplied flag; if persistence cannot be verified, it reports the
+expected/observed values and warns that the write may already have taken effect
+(no automatic rollback). Calls that omit all Prompt on Launch arguments keep
+the previous single-request behaviour with no `OPTIONS` or verification `GET`.
 
 ### Prompt on Launch configuration (workflow templates)
 

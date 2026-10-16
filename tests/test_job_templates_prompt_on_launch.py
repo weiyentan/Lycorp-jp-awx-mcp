@@ -25,12 +25,18 @@ CREATE_ENDPOINT = "/api/v2/job_templates/"
 CREATE_ARGS = dict(name="n", inventory_id=1, project_id=2, playbook="p.yml")
 
 
-def _options(action=None, field_spec=None, actions=None):
-    """Build AWX OPTIONS metadata for the requested action."""
+def _options(action=None, field_spec=None, actions=None, fields=None):
+    """Build AWX OPTIONS metadata for the requested action.
+
+    ``fields`` lists the field names to confirm (default:
+    ``ask_variables_on_launch``); ``field_spec`` applies to each of them.
+    """
     if actions is None:
         if field_spec is None:
             field_spec = {"type": "boolean", "required": False, "read_only": False}
-        actions = {action: {"ask_variables_on_launch": field_spec}}
+        if fields is None:
+            fields = ["ask_variables_on_launch"]
+        actions = {action: {field: dict(field_spec) for field in fields}}
     return {"name": "Job Template", "actions": actions}
 
 
@@ -299,3 +305,194 @@ def test_options_auth_error_propagates_with_zero_writes(fake_client):
             jt_mod.create_job_template(**CREATE_ARGS, ask_variables_on_launch=True)
 
     assert _calls(fake_client) == [("OPTIONS", CREATE_ENDPOINT)]
+
+
+# ---------------------------------------------------------------------------
+# Issue #6 - remaining Prompt on Launch flags with atomic multi-flag checks
+# ---------------------------------------------------------------------------
+
+ALL_ASK_FLAGS = [
+    "ask_variables_on_launch",
+    "ask_credential_on_launch",
+    "ask_inventory_on_launch",
+    "ask_limit_on_launch",
+    "ask_scm_branch_on_launch",
+    "ask_tags_on_launch",
+    "ask_skip_tags_on_launch",
+    "ask_verbosity_on_launch",
+    "ask_diff_mode_on_launch",
+]
+
+
+def test_create_mixed_flags_checks_all_writes_once_and_verifies(fake_client):
+    flags = {
+        "ask_variables_on_launch": True,
+        "ask_credential_on_launch": False,
+        "ask_inventory_on_launch": True,
+    }
+    fake_client.request.side_effect = _routed(
+        {
+            ("OPTIONS", CREATE_ENDPOINT): _options("POST", fields=sorted(flags)),
+            ("POST", CREATE_ENDPOINT): {"id": 99, **flags},
+            ("GET", f"{CREATE_ENDPOINT}99/"): {"id": 99, **flags},
+        }
+    )
+    with _patch(fake_client):
+        out = jt_mod.create_job_template(**CREATE_ARGS, **flags)
+
+    assert _calls(fake_client) == [
+        ("OPTIONS", CREATE_ENDPOINT),
+        ("POST", CREATE_ENDPOINT),
+        ("GET", f"{CREATE_ENDPOINT}99/"),
+    ]
+    body = fake_client.request.call_args_list[1].kwargs["data"]
+    assert {key for key in body if key.startswith("ask_")} == set(flags)
+    assert {key: body[key] for key in flags} == flags
+    assert json.loads(out) == {"id": 99, **flags}
+
+
+@pytest.mark.parametrize("flag", ALL_ASK_FLAGS)
+def test_create_each_flag_true_is_checked_written_and_verified(fake_client, flag):
+    fake_client.request.side_effect = _routed(
+        {
+            ("OPTIONS", CREATE_ENDPOINT): _options("POST", fields=[flag]),
+            ("POST", CREATE_ENDPOINT): {"id": 11, flag: True},
+            ("GET", f"{CREATE_ENDPOINT}11/"): {"id": 11, flag: True},
+        }
+    )
+    with _patch(fake_client):
+        out = jt_mod.create_job_template(**CREATE_ARGS, **{flag: True})
+
+    assert _calls(fake_client) == [
+        ("OPTIONS", CREATE_ENDPOINT),
+        ("POST", CREATE_ENDPOINT),
+        ("GET", f"{CREATE_ENDPOINT}11/"),
+    ]
+    assert fake_client.request.call_args_list[1].kwargs["data"][flag] is True
+    assert json.loads(out)[flag] is True
+
+
+@pytest.mark.parametrize("flag", ALL_ASK_FLAGS)
+def test_update_each_flag_false_is_sent_explicitly(fake_client, flag):
+    detail = f"{CREATE_ENDPOINT}7/"
+    fake_client.request.side_effect = _routed(
+        {
+            ("OPTIONS", detail): _options("PATCH", fields=[flag]),
+            ("PATCH", detail): {"id": 7},
+            ("GET", detail): {"id": 7, flag: False},
+        }
+    )
+    with _patch(fake_client):
+        out = jt_mod.update_job_template(template_id=7, **{flag: False})
+
+    assert fake_client.request.call_args_list[1].kwargs["data"] == {flag: False}
+    assert json.loads(out)[flag] is False
+
+
+def test_update_mixed_flags_checks_all_patches_once_and_verifies(fake_client):
+    detail = f"{CREATE_ENDPOINT}7/"
+    flags = {
+        "ask_limit_on_launch": False,
+        "ask_scm_branch_on_launch": True,
+        "ask_tags_on_launch": False,
+        "ask_skip_tags_on_launch": True,
+        "ask_verbosity_on_launch": True,
+        "ask_diff_mode_on_launch": False,
+    }
+    fake_client.request.side_effect = _routed(
+        {
+            ("OPTIONS", detail): _options("PATCH", fields=sorted(flags)),
+            ("PATCH", detail): {"id": 7},
+            ("GET", detail): {"id": 7, "name": "deploy", **flags},
+        }
+    )
+    with _patch(fake_client):
+        out = jt_mod.update_job_template(template_id=7, name="deploy", **flags)
+
+    assert _calls(fake_client) == [
+        ("OPTIONS", detail),
+        ("PATCH", detail),
+        ("GET", detail),
+    ]
+    assert fake_client.request.call_args_list[1].kwargs["data"] == {
+        "name": "deploy",
+        **flags,
+    }
+    data = json.loads(out)
+    for flag, value in flags.items():
+        assert data[flag] is value
+
+
+def test_partially_supported_batch_fails_closed_with_zero_writes(fake_client):
+    fake_client.request.return_value = _options(
+        "POST", fields=["ask_inventory_on_launch", "ask_limit_on_launch"]
+    )
+    with _patch(fake_client):
+        out = jt_mod.create_job_template(
+            **CREATE_ARGS,
+            ask_inventory_on_launch=True,
+            ask_limit_on_launch=False,
+            ask_credential_on_launch=True,
+        )
+
+    data = json.loads(out)
+    assert data["status"] == "error"
+    assert data["write_attempted"] is False
+    assert "ask_credential_on_launch" in data["message"]
+    assert _calls(fake_client) == [("OPTIONS", CREATE_ENDPOINT)]
+
+
+def test_one_nonwritable_flag_blocks_entire_update(fake_client):
+    detail = f"{CREATE_ENDPOINT}7/"
+    fake_client.request.return_value = _options(
+        "PATCH",
+        actions={
+            "PATCH": {
+                "ask_diff_mode_on_launch": {"type": "boolean", "read_only": False},
+                "ask_tags_on_launch": {"type": "boolean", "read_only": True},
+            }
+        },
+    )
+    with _patch(fake_client):
+        out = jt_mod.update_job_template(
+            template_id=7, ask_tags_on_launch=True, ask_diff_mode_on_launch=True
+        )
+
+    data = json.loads(out)
+    assert data["status"] == "error"
+    assert data["write_attempted"] is False
+    assert "ask_tags_on_launch" in data["message"]
+    assert _calls(fake_client) == [("OPTIONS", detail)]
+
+
+def test_multi_flag_verification_reports_only_mismatched_fields(fake_client):
+    detail = f"{CREATE_ENDPOINT}7/"
+    fake_client.request.side_effect = _routed(
+        {
+            ("OPTIONS", detail): _options(
+                "PATCH",
+                fields=["ask_verbosity_on_launch", "ask_diff_mode_on_launch"],
+            ),
+            ("PATCH", detail): {"id": 7},
+            ("GET", detail): {
+                "id": 7,
+                "ask_verbosity_on_launch": True,
+                "ask_diff_mode_on_launch": False,
+            },
+        }
+    )
+    with _patch(fake_client):
+        out = jt_mod.update_job_template(
+            template_id=7,
+            ask_verbosity_on_launch=True,
+            ask_diff_mode_on_launch=True,
+        )
+
+    data = json.loads(out)
+    assert data["status"] == "error"
+    assert data["write_attempted"] is True
+    assert data["write_may_have_occurred"] is True
+    assert data["verification"] == {
+        "ask_diff_mode_on_launch": {"expected": True, "actual": False}
+    }
+    assert "ask_verbosity_on_launch" not in data["verification"]
