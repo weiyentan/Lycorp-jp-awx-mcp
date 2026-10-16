@@ -486,6 +486,42 @@ already have taken effect (no automatic rollback). Calls that omit the argument
 keep the previous single-request behaviour with no `OPTIONS` or verification
 `GET`.
 
+### Prompt on Launch configuration (workflow templates)
+
+Workflow templates support the same tri-state `ask_variables_on_launch`
+argument on `create_workflow_template` and `update_workflow_template`. This
+configures only the **top-level workflow template**: it does not touch workflow
+nodes, links, child job templates, or inherited settings. As with job
+templates, it is AWX **Prompt on Launch** configuration, not an MCP prompt and
+not an AWX **workflow survey** (surveys remain managed by
+`get/set/delete_workflow_template_survey`). It does not set default
+`extra_vars` for the workflow: `launch_workflow(extra_vars=...)` still supplies
+the values at run time and the flag only authorises them.
+
+```
+"Allow variables to be supplied when launching the Deploy workflow"
+-> update_workflow_template(template_id=10, ask_variables_on_launch=True)
+
+"Stop allowing launch-time variables on Deploy workflow"
+-> update_workflow_template(template_id=10, ask_variables_on_launch=False)
+
+"Create a workflow that accepts launch-time extra variables"
+-> create_workflow_template(name="Deploy", organization_id=1,
+                            ask_variables_on_launch=True)
+```
+
+Validation is workflow-specific: the tool confirms writability from the AWX
+workflow template `OPTIONS` metadata for the operation (collection `POST` for
+create, detail `PATCH` for update). Job-template metadata is never used as a
+substitute, because a workflow template may not support every job-template
+flag. If the metadata does not affirm the field is writable, the whole request
+is rejected before any write. An accepted request performs one workflow
+`POST`/`PATCH` followed by a `GET` of the top-level workflow template to verify
+the persisted value; mismatches or unreadable verification report
+expected/actual values and warn that the write may already have taken effect
+(no rollback or retry). Omitting the argument keeps the existing
+single-request workflow behaviour with no `OPTIONS` or verification `GET`.
+
 ### Projects and SCM
 
 ```
