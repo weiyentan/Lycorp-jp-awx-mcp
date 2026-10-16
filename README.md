@@ -454,6 +454,125 @@ Send natural language requests to your MCP client (Claude, etc.) and the server 
 -> relaunch_job(job_id=123)
 ```
 
+### Prompt on Launch configuration (job templates)
+
+`create_job_template` and `update_job_template` accept optional tri-state
+Prompt on Launch arguments for every native job-template flag:
+
+| Argument | Launch-time override it authorises |
+| --- | --- |
+| `ask_variables_on_launch` | `extra_vars` |
+| `ask_credential_on_launch` | credentials |
+| `ask_inventory_on_launch` | inventory |
+| `ask_limit_on_launch` | host limit |
+| `ask_scm_branch_on_launch` | SCM branch |
+| `ask_tags_on_launch` | job tags |
+| `ask_skip_tags_on_launch` | skip tags |
+| `ask_verbosity_on_launch` | verbosity |
+| `ask_diff_mode_on_launch` | diff mode |
+
+These arguments configure AWX **permission to override** at launch. They are
+not MCP prompts, store no values, and are not AWX **surveys** (surveys remain
+managed by `get/set/delete_job_template_survey`). For example,
+`ask_credential_on_launch=True` does not attach a credential,
+`ask_inventory_on_launch=True` does not choose an inventory, and
+`ask_limit_on_launch=True` does not set a limit — `launch_job(...)` still sends
+the actual value at run time and AWX accepts it only because the flag permits
+it.
+
+```
+"Allow credentials to be supplied when launching the Deploy App template"
+-> update_job_template(template_id=5, ask_credential_on_launch=True)
+
+"Allow an inventory override and disable limit overrides in one request"
+-> update_job_template(
+       template_id=5,
+       ask_inventory_on_launch=True,
+       ask_limit_on_launch=False,
+   )
+
+"Stop allowing launch-time extra variables on Deploy App"
+-> update_job_template(template_id=5, ask_variables_on_launch=False)
+```
+
+Tri-state semantics: `True` enables, `False` disables, and omitting an argument
+leaves the AWX default on create (or the current value on update). An explicit
+`False` is submitted, never treated as omission. Mixed true/false requests are
+handled in a single operation.
+
+Before writing, the tool queries the AWX `OPTIONS` metadata for the create or
+update endpoint once and confirms **every** supplied flag is writable for this
+AWX instance. If any requested flag is unsupported, missing or ambiguous, the
+whole request is rejected and **no write is attempted**. After an accepted
+write (exactly one POST/PATCH), the tool reads the template back and verifies
+every supplied flag; if persistence cannot be verified, it reports the
+expected/observed values and warns that the write may already have taken effect
+(no automatic rollback). Calls that omit all Prompt on Launch arguments keep
+the previous single-request behaviour with no `OPTIONS` or verification `GET`.
+
+### Prompt on Launch configuration (workflow templates)
+
+`create_workflow_template` and `update_workflow_template` accept the
+workflow-native Prompt on Launch switches below, each tri-state (`True`
+enables, `False` disables, omitted leaves the AWX default on create or the
+current value on update):
+
+- `ask_variables_on_launch` — allow launch-time `extra_vars`
+- `ask_inventory_on_launch` — allow overriding the workflow inventory
+- `ask_limit_on_launch` — allow overriding the host limit
+- `ask_scm_branch_on_launch` — allow overriding the SCM branch
+- `ask_labels_on_launch` — allow overriding labels
+- `ask_skip_tags_on_launch` — allow overriding the tags to skip
+- `ask_tags_on_launch` — allow overriding job tags
+
+Workflow templates do **not** support every job-template flag. Job-template-only
+switches such as `ask_credential_on_launch`, `ask_verbosity_on_launch`,
+`ask_diff_mode_on_launch`, `ask_job_type_on_launch` and `ask_forks_on_launch`
+are not arguments of the workflow tools at all. Each accepted switch is still
+confirmed against this AWX instance's workflow `OPTIONS` metadata; an instance
+that does not expose a switch rejects a request naming it (fail closed).
+
+This configures only the **top-level workflow template**: it does not touch
+workflow nodes, links, child job templates, or inherited settings. As with job
+templates, it is AWX **Prompt on Launch** configuration, not an MCP prompt and
+not an AWX **workflow survey** (surveys remain managed by
+`get/set/delete_workflow_template_survey`). It does not set default
+`extra_vars` for the workflow: `launch_workflow(extra_vars=...)` still supplies
+the values at run time and the flag only authorises them.
+
+```
+"Allow variables to be supplied when launching the Deploy workflow"
+-> update_workflow_template(template_id=10, ask_variables_on_launch=True)
+
+"Stop allowing launch-time variables on Deploy workflow"
+-> update_workflow_template(template_id=10, ask_variables_on_launch=False)
+
+"Create a workflow that accepts launch-time inventory and limit overrides"
+-> create_workflow_template(name="Deploy", organization_id=1,
+                            ask_inventory_on_launch=True,
+                            ask_limit_on_launch=True)
+
+"Prompt for variables but stop SCM branch overrides in one update"
+-> update_workflow_template(template_id=10,
+                            ask_variables_on_launch=True,
+                            ask_scm_branch_on_launch=False)
+```
+
+Validation is workflow-specific: the tool confirms writability for **every**
+explicitly requested switch from the AWX workflow template `OPTIONS` metadata
+for the operation (collection `POST` for create, detail `PATCH` for update).
+Job-template metadata is never used as a substitute, because a workflow
+template may not support every job-template flag. If any requested switch is
+unsupported, unavailable or ambiguous, the whole request is rejected before
+any write — even when the other requested switches are supported; unsupported
+fields are never filtered out silently. An accepted request performs one
+workflow `POST`/`PATCH` (with explicit `False` values submitted, never treated
+as omission) followed by a `GET` of the top-level workflow template to verify
+only the switches that were requested; mismatches or unreadable verification
+report expected/actual values and warn that the write may already have taken
+effect (no rollback or retry). Omitting all switches keeps the existing
+single-request workflow behaviour with no `OPTIONS` or verification `GET`.
+
 ### Projects and SCM
 
 ```

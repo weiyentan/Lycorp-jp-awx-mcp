@@ -2,6 +2,7 @@
 
 import json
 import re
+from typing import Any
 
 # --- Secret masking -----------------------------------------------------------
 # Shared by the usage instrumentation and the API client so that bearer tokens /
@@ -48,3 +49,43 @@ def parse_json_str(value: str, param_name: str) -> tuple:
         return None, json.dumps(
             {"status": "error", "message": f"Invalid JSON in {param_name}"}
         )
+
+
+def interpret_prompt_on_launch_metadata(
+    metadata: Any,
+    action: str,
+    fields: list[str],
+) -> str | None:
+    """Check AWX OPTIONS metadata confirms every field is writable.
+
+    ``action`` is the HTTP action the caller will use (``POST`` on a collection
+    endpoint, ``PATCH`` on a detail endpoint). Installations that publish only
+    a ``PUT`` action mapping for an update are accepted, because AWX/DRF treats
+    both actions as accepting the same writable field set.
+
+    Returns ``None`` when every requested field is affirmatively writable,
+    otherwise a human-readable reason. Missing, malformed or ambiguous metadata
+    is a failure so callers can reject before writing.
+    """
+    if not isinstance(metadata, dict):
+        return "the OPTIONS response was not a JSON object"
+    actions = metadata.get("actions")
+    if not isinstance(actions, dict) or not actions:
+        return "the OPTIONS response contains no action metadata"
+    action_meta = actions.get(action)
+    if action_meta is None and action == "PATCH":
+        action_meta = actions.get("PUT")
+    if not isinstance(action_meta, dict):
+        return f"the OPTIONS response contains no writable '{action}' action metadata"
+    for field in fields:
+        spec = action_meta.get(field)
+        if not isinstance(spec, dict):
+            return f"field '{field}' is not present in the '{action}' action metadata"
+        if spec.get("read_only"):
+            return f"field '{field}' is marked read-only"
+        if spec.get("type") != "boolean":
+            return (
+                f"field '{field}' is not confirmed as a writable Boolean field "
+                f"(metadata type: {spec.get('type')!r})"
+            )
+    return None

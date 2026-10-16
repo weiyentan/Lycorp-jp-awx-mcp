@@ -10,8 +10,140 @@ import json
 from typing import Any
 
 from ..client import get_ansible_client, handle_pagination
+from ..exceptions import AnsibleAPIError
 from ..server import read_tool, write_tool
-from ..utils import parse_json_str, validate_json_str
+from ..utils import (
+    interpret_prompt_on_launch_metadata,
+    parse_json_str,
+    validate_json_str,
+)
+
+
+def _prompt_launch_failure(
+    message: str,
+    *,
+    endpoint: str,
+    action: str,
+    requested_fields: list[str],
+    write_attempted: bool,
+    **extra: Any,
+) -> str:
+    """Build the JSON error envelope for a Prompt on Launch failure."""
+    payload: dict[str, Any] = {
+        "status": "error",
+        "message": message,
+        "endpoint": endpoint,
+        "action": action,
+        "requested_fields": requested_fields,
+        "write_attempted": write_attempted,
+    }
+    payload.update(extra)
+    return json.dumps(payload, indent=2)
+
+
+def _collect_prompt_on_launch_flags(**flags: bool | None) -> dict[str, bool]:
+    """Return only the explicitly supplied Prompt on Launch flags.
+
+    ``True`` enables and ``False`` disables; omitted (``None``) entries are not
+    returned so they are neither validated nor submitted. An explicit ``False``
+    is preserved and never treated as omission.
+    """
+    return {name: value for name, value in flags.items() if value is not None}
+
+
+def _check_prompt_on_launch_capability(
+    client: Any, endpoint: str, action: str, fields: list[str]
+) -> str | None:
+    """Confirm via workflow OPTIONS metadata that every field is writable.
+
+    Queries the workflow job template endpoint the caller is about to write to
+    (collection ``POST`` for create, detail ``PATCH`` for update). Job-template
+    metadata is never substituted. Returns an error response string when the
+    metadata is missing, ambiguous or does not confirm a field; ``None`` when
+    the write may proceed. Callers must not write when this returns an error.
+    """
+    metadata = client.request("OPTIONS", endpoint)
+    reason = interpret_prompt_on_launch_metadata(metadata, action, fields)
+    if reason is None:
+        return None
+    return _prompt_launch_failure(
+        "Prompt on Launch capability check failed before write: "
+        f"{reason}. No configuration write was attempted.",
+        endpoint=endpoint,
+        action=action,
+        requested_fields=fields,
+        write_attempted=False,
+    )
+
+
+def _verify_prompt_on_launch_write(
+    client: Any,
+    *,
+    template_id: int | None,
+    endpoint: str,
+    action: str,
+    requested: dict[str, bool],
+) -> str:
+    """GET the saved workflow template and compare requested flags to values.
+
+    A mismatch or read-back failure reports expected/observed values and warns
+    that the write may already have taken effect; no rollback or retry is
+    attempted.
+    """
+    fields = list(requested)
+    if template_id is None:
+        return _prompt_launch_failure(
+            "The configuration write was accepted but read-after-write "
+            "verification could not determine the workflow template ID from "
+            "the write response. The write may already have taken effect; no "
+            "automatic rollback was attempted.",
+            endpoint=endpoint,
+            action=action,
+            requested_fields=fields,
+            write_attempted=True,
+            write_may_have_occurred=True,
+            verification={"error": "missing workflow template id in write response"},
+        )
+
+    detail_endpoint = f"/api/v2/workflow_job_templates/{template_id}/"
+    try:
+        template = client.request("GET", detail_endpoint)
+    except AnsibleAPIError as exc:
+        return _prompt_launch_failure(
+            "The configuration write was accepted but read-after-write "
+            f"verification failed: {exc}. The write may already have taken "
+            "effect; no automatic rollback was attempted.",
+            endpoint=endpoint,
+            action=action,
+            requested_fields=fields,
+            write_attempted=True,
+            write_may_have_occurred=True,
+            verification={"error": str(exc)},
+        )
+
+    mismatches: dict[str, Any] = {}
+    for field, expected in requested.items():
+        actual = template.get(field) if isinstance(template, dict) else None
+        if actual is not expected:
+            mismatches[field] = {"expected": expected, "actual": actual}
+
+    if mismatches:
+        return _prompt_launch_failure(
+            "The configuration write was accepted but read-after-write "
+            f"verification found mismatches for {sorted(mismatches)}. The "
+            "write may already have taken effect; no automatic rollback was "
+            "attempted.",
+            endpoint=endpoint,
+            action=action,
+            requested_fields=fields,
+            write_attempted=True,
+            write_may_have_occurred=True,
+            verification=mismatches,
+            template=template,
+        )
+
+    return json.dumps(template, indent=2)
+
 
 # =============================================================================
 # Workflow Template Management
@@ -84,12 +216,30 @@ def create_workflow_template(
     inventory: int = None,
     limit: str = None,
     scm_branch: str = None,
+    ask_variables_on_launch: bool | None = None,
+    ask_inventory_on_launch: bool | None = None,
+    ask_limit_on_launch: bool | None = None,
+    ask_scm_branch_on_launch: bool | None = None,
+    ask_labels_on_launch: bool | None = None,
+    ask_skip_tags_on_launch: bool | None = None,
+    ask_tags_on_launch: bool | None = None,
 ) -> str:
     """Create an AWX workflow template for multi-step orchestration.
 
     Use this when you need conditional branching or chained job execution
     across multiple nodes.
     For single-playbook template creation, use create_job_template instead.
+
+    Prompt on Launch (tri-state): the ask_*_on_launch arguments below follow a
+    single pattern. Supplying True or False makes the tool confirm via
+    workflow-template OPTIONS metadata that every supplied field is writable
+    for create, send exactly one POST, then read the top-level workflow
+    template back to verify each persisted value. If any requested field is
+    unsupported, ambiguous or non-writable, the whole request is rejected
+    before any write. These flags only authorise launch-time overrides; they
+    are not AWX surveys and store no values. Omitted fields keep the AWX
+    default. Workflow templates do not support every job-template prompt flag;
+    only flags natively available to the workflow resource are accepted here.
 
     Args:
         name: Name of the workflow template
@@ -102,12 +252,41 @@ def create_workflow_template(
             (from list_inventories)
         limit: Default host limit pattern for nodes that prompt on launch
         scm_branch: Default SCM branch for nodes that prompt on launch
+        ask_variables_on_launch: Prompt for extra variables at launch. True
+            enables, False disables, omitted keeps the AWX default.
+        ask_inventory_on_launch: Prompt for inventory at launch. This
+            configures permission to override the workflow inventory, not its
+            contents.
+        ask_limit_on_launch: Prompt for host limit at launch. This configures
+            permission to override the limit, not a limit value.
+        ask_scm_branch_on_launch: Prompt for SCM branch at launch.
+        ask_labels_on_launch: Prompt for labels at launch.
+        ask_skip_tags_on_launch: Prompt for job tags to skip at launch.
+        ask_tags_on_launch: Prompt for job tags at launch.
     """
     error = validate_json_str(extra_vars, "extra_vars")
     if error:
         return error
 
+    requested = _collect_prompt_on_launch_flags(
+        ask_variables_on_launch=ask_variables_on_launch,
+        ask_inventory_on_launch=ask_inventory_on_launch,
+        ask_limit_on_launch=ask_limit_on_launch,
+        ask_scm_branch_on_launch=ask_scm_branch_on_launch,
+        ask_labels_on_launch=ask_labels_on_launch,
+        ask_skip_tags_on_launch=ask_skip_tags_on_launch,
+        ask_tags_on_launch=ask_tags_on_launch,
+    )
+    endpoint = "/api/v2/workflow_job_templates/"
+
     with get_ansible_client() as client:
+        if requested:
+            error = _check_prompt_on_launch_capability(
+                client, endpoint, "POST", sorted(requested)
+            )
+            if error:
+                return error
+
         data = {
             "name": name,
             "organization": organization_id,
@@ -122,8 +301,17 @@ def create_workflow_template(
             data["limit"] = limit
         if scm_branch is not None:
             data["scm_branch"] = scm_branch
-        response = client.request("POST", "/api/v2/workflow_job_templates/", data=data)
-        return json.dumps(response, indent=2)
+        data.update(requested)
+        response = client.request("POST", endpoint, data=data)
+        if not requested:
+            return json.dumps(response, indent=2)
+        return _verify_prompt_on_launch_write(
+            client,
+            template_id=response.get("id") if isinstance(response, dict) else None,
+            endpoint=endpoint,
+            action="POST",
+            requested=requested,
+        )
 
 
 @write_tool(idempotent=True)
@@ -137,11 +325,29 @@ def update_workflow_template(
     inventory: int = None,
     limit: str = None,
     scm_branch: str = None,
+    ask_variables_on_launch: bool | None = None,
+    ask_inventory_on_launch: bool | None = None,
+    ask_limit_on_launch: bool | None = None,
+    ask_scm_branch_on_launch: bool | None = None,
+    ask_labels_on_launch: bool | None = None,
+    ask_skip_tags_on_launch: bool | None = None,
+    ask_tags_on_launch: bool | None = None,
 ) -> str:
     """Update an existing AWX workflow template.
 
     Use this to change orchestration-level defaults used by future launch_workflow runs.
     For single-playbook template updates, use update_job_template instead.
+
+    Prompt on Launch (tri-state): the ask_*_on_launch arguments below follow a
+    single pattern. Supplying True or False makes the tool confirm via
+    workflow-template OPTIONS metadata that every supplied field is writable
+    for update, send exactly one PATCH, then read the top-level workflow
+    template back to verify each persisted value. If any requested field is
+    unsupported, ambiguous or non-writable, the whole request is rejected
+    before any write. These flags only authorise launch-time overrides; they
+    are not AWX surveys and store no values. Omitted fields keep the existing
+    value. Workflow templates do not support every job-template prompt flag;
+    only flags natively available to the workflow resource are accepted here.
 
     Args:
         template_id: ID of the workflow template
@@ -155,13 +361,42 @@ def update_workflow_template(
             (from list_inventories)
         limit: Default host limit pattern for nodes that prompt on launch
         scm_branch: Default SCM branch for nodes that prompt on launch
+        ask_variables_on_launch: Prompt for extra variables at launch. True
+            enables, False disables, omitted keeps the current value.
+        ask_inventory_on_launch: Prompt for inventory at launch. This
+            configures permission to override the workflow inventory, not its
+            contents.
+        ask_limit_on_launch: Prompt for host limit at launch. This configures
+            permission to override the limit, not a limit value.
+        ask_scm_branch_on_launch: Prompt for SCM branch at launch.
+        ask_labels_on_launch: Prompt for labels at launch.
+        ask_skip_tags_on_launch: Prompt for job tags to skip at launch.
+        ask_tags_on_launch: Prompt for job tags at launch.
     """
     if extra_vars is not None:
         error = validate_json_str(extra_vars, "extra_vars")
         if error:
             return error
 
+    requested = _collect_prompt_on_launch_flags(
+        ask_variables_on_launch=ask_variables_on_launch,
+        ask_inventory_on_launch=ask_inventory_on_launch,
+        ask_limit_on_launch=ask_limit_on_launch,
+        ask_scm_branch_on_launch=ask_scm_branch_on_launch,
+        ask_labels_on_launch=ask_labels_on_launch,
+        ask_skip_tags_on_launch=ask_skip_tags_on_launch,
+        ask_tags_on_launch=ask_tags_on_launch,
+    )
+    endpoint = f"/api/v2/workflow_job_templates/{template_id}/"
+
     with get_ansible_client() as client:
+        if requested:
+            error = _check_prompt_on_launch_capability(
+                client, endpoint, "PATCH", sorted(requested)
+            )
+            if error:
+                return error
+
         data: dict[str, Any] = {}
         if name is not None:
             data["name"] = name
@@ -179,11 +414,18 @@ def update_workflow_template(
             data["limit"] = limit
         if scm_branch is not None:
             data["scm_branch"] = scm_branch
+        data.update(requested)
 
-        response = client.request(
-            "PATCH", f"/api/v2/workflow_job_templates/{template_id}/", data=data
+        response = client.request("PATCH", endpoint, data=data)
+        if not requested:
+            return json.dumps(response, indent=2)
+        return _verify_prompt_on_launch_write(
+            client,
+            template_id=template_id,
+            endpoint=endpoint,
+            action="PATCH",
+            requested=requested,
         )
-        return json.dumps(response, indent=2)
 
 
 @write_tool(destructive=True)
