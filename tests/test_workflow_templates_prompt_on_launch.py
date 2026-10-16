@@ -91,6 +91,39 @@ def test_create_true_checks_workflow_options_single_write_and_verifies(fake_clie
     assert json.loads(out) == {"id": 99, "ask_variables_on_launch": True}
 
 
+def test_create_sends_mixed_workflow_flags_in_one_validated_write(fake_client):
+    requested = {
+        "ask_variables_on_launch": True,
+        "ask_inventory_on_launch": False,
+        "ask_limit_on_launch": True,
+        "ask_scm_branch_on_launch": False,
+        "ask_labels_on_launch": True,
+        "ask_skip_tags_on_launch": False,
+        "ask_tags_on_launch": True,
+    }
+    options = {field: {"type": "boolean"} for field in requested}
+    persisted = {"id": 99, **requested}
+    fake_client.request.side_effect = _routed(
+        {
+            ("OPTIONS", COLLECTION): {"actions": {"POST": options}},
+            ("POST", COLLECTION): persisted,
+            ("GET", f"{COLLECTION}99/"): persisted,
+        }
+    )
+    with _patch(fake_client):
+        out = wt_mod.create_workflow_template(**CREATE_ARGS, **requested)
+
+    assert _calls(fake_client) == [
+        ("OPTIONS", COLLECTION),
+        ("POST", COLLECTION),
+        ("GET", f"{COLLECTION}99/"),
+    ]
+    body = fake_client.request.call_args_list[1].kwargs["data"]
+    for field, value in requested.items():
+        assert body[field] is value
+    assert json.loads(out) == persisted
+
+
 def test_create_false_is_sent_explicitly(fake_client):
     fake_client.request.side_effect = _routed(
         {
@@ -343,6 +376,198 @@ def test_options_auth_error_propagates_with_zero_writes(fake_client):
             wt_mod.create_workflow_template(**CREATE_ARGS, ask_variables_on_launch=True)
 
     assert _calls(fake_client) == [("OPTIONS", COLLECTION)]
+
+
+def test_update_sends_mixed_workflow_flags_and_leaves_omitted_unchanged(fake_client):
+    detail = f"{COLLECTION}7/"
+    requested = {
+        "ask_inventory_on_launch": False,
+        "ask_limit_on_launch": True,
+        "ask_scm_branch_on_launch": False,
+        "ask_labels_on_launch": True,
+        "ask_skip_tags_on_launch": False,
+        "ask_tags_on_launch": True,
+    }
+    options = {field: {"type": "boolean"} for field in requested}
+    fake_client.request.side_effect = _routed(
+        {
+            ("OPTIONS", detail): {"actions": {"PATCH": options}},
+            ("PATCH", detail): {"id": 7},
+            ("GET", detail): {"id": 7, **requested},
+        }
+    )
+    with _patch(fake_client):
+        out = wt_mod.update_workflow_template(template_id=7, **requested)
+
+    body = fake_client.request.call_args_list[1].kwargs["data"]
+    assert body == requested
+    assert "ask_variables_on_launch" not in body
+    assert json.loads(out) == {"id": 7, **requested}
+
+
+def test_create_rejects_whole_request_when_any_requested_flag_unsupported(fake_client):
+    # ask_variables_on_launch is affirmatively writable, but the presence of a
+    # single unconfirmed flag must reject the entire request before any write.
+    fake_client.request.return_value = {
+        "actions": {"POST": {"ask_variables_on_launch": {"type": "boolean"}}}
+    }
+    with _patch(fake_client):
+        out = wt_mod.create_workflow_template(
+            **CREATE_ARGS,
+            ask_variables_on_launch=True,
+            ask_inventory_on_launch=True,
+        )
+
+    data = json.loads(out)
+    assert data["status"] == "error"
+    assert data["write_attempted"] is False
+    assert "ask_inventory_on_launch" in data["message"]
+    assert _calls(fake_client) == [("OPTIONS", COLLECTION)]
+
+
+def test_update_rejects_whole_request_when_any_flag_not_writable_boolean(fake_client):
+    detail = f"{COLLECTION}7/"
+    fake_client.request.return_value = {
+        "actions": {
+            "PATCH": {
+                "ask_variables_on_launch": {"type": "boolean"},
+                "ask_scm_branch_on_launch": {"type": "string"},
+            }
+        }
+    }
+    with _patch(fake_client):
+        out = wt_mod.update_workflow_template(
+            template_id=7,
+            ask_variables_on_launch=True,
+            ask_scm_branch_on_launch=True,
+        )
+
+    data = json.loads(out)
+    assert data["status"] == "error"
+    assert data["write_attempted"] is False
+    assert "ask_scm_branch_on_launch" in data["message"]
+    assert _calls(fake_client) == [("OPTIONS", detail)]
+
+
+def test_job_template_only_metadata_does_not_authorise_workflow_flags(fake_client):
+    # Metadata listing job-template-only switches must not be treated as
+    # workflow capabilities or substituted for the missing workflow flag.
+    fake_client.request.return_value = {
+        "actions": {
+            "POST": {
+                "ask_credential_on_launch": {"type": "boolean"},
+                "ask_verbosity_on_launch": {"type": "boolean"},
+                "ask_diff_mode_on_launch": {"type": "boolean"},
+            }
+        }
+    }
+    with _patch(fake_client):
+        out = wt_mod.create_workflow_template(
+            **CREATE_ARGS, ask_inventory_on_launch=True
+        )
+
+    data = json.loads(out)
+    assert data["status"] == "error"
+    assert data["write_attempted"] is False
+    assert "ask_inventory_on_launch" in data["message"]
+    assert _calls(fake_client) == [("OPTIONS", COLLECTION)]
+
+
+@pytest.mark.parametrize(
+    "flag",
+    [
+        "ask_credential_on_launch",
+        "ask_verbosity_on_launch",
+        "ask_diff_mode_on_launch",
+        "ask_job_type_on_launch",
+        "ask_forks_on_launch",
+    ],
+)
+def test_job_template_only_flags_are_not_workflow_arguments(flag):
+    with pytest.raises(TypeError):
+        wt_mod.create_workflow_template(**CREATE_ARGS, **{flag: True})
+    with pytest.raises(TypeError):
+        wt_mod.update_workflow_template(template_id=7, **{flag: True})
+
+
+def test_update_verification_ignores_unrequested_workflow_flags(fake_client):
+    detail = f"{COLLECTION}7/"
+    fake_client.request.side_effect = _routed(
+        {
+            ("OPTIONS", detail): {
+                "actions": {"PATCH": {"ask_inventory_on_launch": {"type": "boolean"}}}
+            },
+            ("PATCH", detail): {"id": 7},
+            ("GET", detail): {
+                "id": 7,
+                "ask_inventory_on_launch": True,
+                "ask_limit_on_launch": False,
+            },
+        }
+    )
+    with _patch(fake_client):
+        out = wt_mod.update_workflow_template(
+            template_id=7, ask_inventory_on_launch=True
+        )
+
+    data = json.loads(out)
+    assert data["ask_inventory_on_launch"] is True
+    assert data["ask_limit_on_launch"] is False
+
+
+def test_verification_reports_every_mismatched_requested_flag(fake_client):
+    detail = f"{COLLECTION}7/"
+    requested = {
+        "ask_inventory_on_launch": True,
+        "ask_limit_on_launch": False,
+    }
+    fake_client.request.side_effect = _routed(
+        {
+            ("OPTIONS", detail): {
+                "actions": {
+                    "PATCH": {field: {"type": "boolean"} for field in requested}
+                }
+            },
+            ("PATCH", detail): {"id": 7},
+            ("GET", detail): {
+                "id": 7,
+                "ask_inventory_on_launch": False,
+                "ask_limit_on_launch": True,
+            },
+        }
+    )
+    with _patch(fake_client):
+        out = wt_mod.update_workflow_template(template_id=7, **requested)
+
+    data = json.loads(out)
+    assert data["status"] == "error"
+    assert data["write_attempted"] is True
+    assert data["write_may_have_occurred"] is True
+    assert data["verification"]["ask_inventory_on_launch"] == {
+        "expected": True,
+        "actual": False,
+    }
+    assert data["verification"]["ask_limit_on_launch"] == {
+        "expected": False,
+        "actual": True,
+    }
+
+
+def test_legacy_update_with_defaults_and_no_flags_is_single_write(fake_client):
+    detail = f"{COLLECTION}7/"
+    fake_client.request.return_value = {"id": 7}
+    with _patch(fake_client):
+        out = wt_mod.update_workflow_template(
+            template_id=7, inventory=3, limit="prod", scm_branch="main"
+        )
+
+    assert _calls(fake_client) == [("PATCH", detail)]
+    assert fake_client.request.call_args.kwargs["data"] == {
+        "inventory": 3,
+        "limit": "prod",
+        "scm_branch": "main",
+    }
+    assert json.loads(out) == {"id": 7}
 
 
 def test_survey_and_node_helpers_are_untouched_by_prompt_configuration(fake_client):

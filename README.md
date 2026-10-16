@@ -488,10 +488,28 @@ keep the previous single-request behaviour with no `OPTIONS` or verification
 
 ### Prompt on Launch configuration (workflow templates)
 
-Workflow templates support the same tri-state `ask_variables_on_launch`
-argument on `create_workflow_template` and `update_workflow_template`. This
-configures only the **top-level workflow template**: it does not touch workflow
-nodes, links, child job templates, or inherited settings. As with job
+`create_workflow_template` and `update_workflow_template` accept the
+workflow-native Prompt on Launch switches below, each tri-state (`True`
+enables, `False` disables, omitted leaves the AWX default on create or the
+current value on update):
+
+- `ask_variables_on_launch` — allow launch-time `extra_vars`
+- `ask_inventory_on_launch` — allow overriding the workflow inventory
+- `ask_limit_on_launch` — allow overriding the host limit
+- `ask_scm_branch_on_launch` — allow overriding the SCM branch
+- `ask_labels_on_launch` — allow overriding labels
+- `ask_skip_tags_on_launch` — allow overriding the tags to skip
+- `ask_tags_on_launch` — allow overriding job tags
+
+Workflow templates do **not** support every job-template flag. Job-template-only
+switches such as `ask_credential_on_launch`, `ask_verbosity_on_launch`,
+`ask_diff_mode_on_launch`, `ask_job_type_on_launch` and `ask_forks_on_launch`
+are not arguments of the workflow tools at all. Each accepted switch is still
+confirmed against this AWX instance's workflow `OPTIONS` metadata; an instance
+that does not expose a switch rejects a request naming it (fail closed).
+
+This configures only the **top-level workflow template**: it does not touch
+workflow nodes, links, child job templates, or inherited settings. As with job
 templates, it is AWX **Prompt on Launch** configuration, not an MCP prompt and
 not an AWX **workflow survey** (surveys remain managed by
 `get/set/delete_workflow_template_survey`). It does not set default
@@ -505,21 +523,30 @@ the values at run time and the flag only authorises them.
 "Stop allowing launch-time variables on Deploy workflow"
 -> update_workflow_template(template_id=10, ask_variables_on_launch=False)
 
-"Create a workflow that accepts launch-time extra variables"
+"Create a workflow that accepts launch-time inventory and limit overrides"
 -> create_workflow_template(name="Deploy", organization_id=1,
-                            ask_variables_on_launch=True)
+                            ask_inventory_on_launch=True,
+                            ask_limit_on_launch=True)
+
+"Prompt for variables but stop SCM branch overrides in one update"
+-> update_workflow_template(template_id=10,
+                            ask_variables_on_launch=True,
+                            ask_scm_branch_on_launch=False)
 ```
 
-Validation is workflow-specific: the tool confirms writability from the AWX
-workflow template `OPTIONS` metadata for the operation (collection `POST` for
-create, detail `PATCH` for update). Job-template metadata is never used as a
-substitute, because a workflow template may not support every job-template
-flag. If the metadata does not affirm the field is writable, the whole request
-is rejected before any write. An accepted request performs one workflow
-`POST`/`PATCH` followed by a `GET` of the top-level workflow template to verify
-the persisted value; mismatches or unreadable verification report
-expected/actual values and warn that the write may already have taken effect
-(no rollback or retry). Omitting the argument keeps the existing
+Validation is workflow-specific: the tool confirms writability for **every**
+explicitly requested switch from the AWX workflow template `OPTIONS` metadata
+for the operation (collection `POST` for create, detail `PATCH` for update).
+Job-template metadata is never used as a substitute, because a workflow
+template may not support every job-template flag. If any requested switch is
+unsupported, unavailable or ambiguous, the whole request is rejected before
+any write — even when the other requested switches are supported; unsupported
+fields are never filtered out silently. An accepted request performs one
+workflow `POST`/`PATCH` (with explicit `False` values submitted, never treated
+as omission) followed by a `GET` of the top-level workflow template to verify
+only the switches that were requested; mismatches or unreadable verification
+report expected/actual values and warn that the write may already have taken
+effect (no rollback or retry). Omitting all switches keeps the existing
 single-request workflow behaviour with no `OPTIONS` or verification `GET`.
 
 ### Projects and SCM

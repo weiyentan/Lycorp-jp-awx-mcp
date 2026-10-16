@@ -41,6 +41,16 @@ def _prompt_launch_failure(
     return json.dumps(payload, indent=2)
 
 
+def _collect_prompt_on_launch_flags(**flags: bool | None) -> dict[str, bool]:
+    """Return only the explicitly supplied Prompt on Launch flags.
+
+    ``True`` enables and ``False`` disables; omitted (``None``) entries are not
+    returned so they are neither validated nor submitted. An explicit ``False``
+    is preserved and never treated as omission.
+    """
+    return {name: value for name, value in flags.items() if value is not None}
+
+
 def _check_prompt_on_launch_capability(
     client: Any, endpoint: str, action: str, fields: list[str]
 ) -> str | None:
@@ -207,6 +217,12 @@ def create_workflow_template(
     limit: str = None,
     scm_branch: str = None,
     ask_variables_on_launch: bool | None = None,
+    ask_inventory_on_launch: bool | None = None,
+    ask_limit_on_launch: bool | None = None,
+    ask_scm_branch_on_launch: bool | None = None,
+    ask_labels_on_launch: bool | None = None,
+    ask_skip_tags_on_launch: bool | None = None,
+    ask_tags_on_launch: bool | None = None,
 ) -> str:
     """Create an AWX workflow template for multi-step orchestration.
 
@@ -214,12 +230,16 @@ def create_workflow_template(
     across multiple nodes.
     For single-playbook template creation, use create_job_template instead.
 
-    Prompt on Launch (tri-state): when ask_variables_on_launch is True or False
-    the tool first confirms via workflow-template OPTIONS metadata that the
-    field is writable for create, sends exactly one POST, then reads the
-    top-level workflow template back to verify the persisted value. This flag
-    only authorises launch-time extra_vars for the workflow; it is not an AWX
-    survey and does not set default extra_vars. Omitted leaves the AWX default.
+    Prompt on Launch (tri-state): the ask_*_on_launch arguments below follow a
+    single pattern. Supplying True or False makes the tool confirm via
+    workflow-template OPTIONS metadata that every supplied field is writable
+    for create, send exactly one POST, then read the top-level workflow
+    template back to verify each persisted value. If any requested field is
+    unsupported, ambiguous or non-writable, the whole request is rejected
+    before any write. These flags only authorise launch-time overrides; they
+    are not AWX surveys and store no values. Omitted fields keep the AWX
+    default. Workflow templates do not support every job-template prompt flag;
+    only flags natively available to the workflow resource are accepted here.
 
     Args:
         name: Name of the workflow template
@@ -232,22 +252,37 @@ def create_workflow_template(
             (from list_inventories)
         limit: Default host limit pattern for nodes that prompt on launch
         scm_branch: Default SCM branch for nodes that prompt on launch
-        ask_variables_on_launch: Prompt on Launch for extra variables. True
-            enables, False disables, omitted leaves the AWX default. Explicit
-            values are capability-checked against workflow metadata before
-            writing and verified after.
+        ask_variables_on_launch: Prompt for extra variables at launch. True
+            enables, False disables, omitted keeps the AWX default.
+        ask_inventory_on_launch: Prompt for inventory at launch. This
+            configures permission to override the workflow inventory, not its
+            contents.
+        ask_limit_on_launch: Prompt for host limit at launch. This configures
+            permission to override the limit, not a limit value.
+        ask_scm_branch_on_launch: Prompt for SCM branch at launch.
+        ask_labels_on_launch: Prompt for labels at launch.
+        ask_skip_tags_on_launch: Prompt for job tags to skip at launch.
+        ask_tags_on_launch: Prompt for job tags at launch.
     """
     error = validate_json_str(extra_vars, "extra_vars")
     if error:
         return error
 
-    ask_requested = ask_variables_on_launch is not None
+    requested = _collect_prompt_on_launch_flags(
+        ask_variables_on_launch=ask_variables_on_launch,
+        ask_inventory_on_launch=ask_inventory_on_launch,
+        ask_limit_on_launch=ask_limit_on_launch,
+        ask_scm_branch_on_launch=ask_scm_branch_on_launch,
+        ask_labels_on_launch=ask_labels_on_launch,
+        ask_skip_tags_on_launch=ask_skip_tags_on_launch,
+        ask_tags_on_launch=ask_tags_on_launch,
+    )
     endpoint = "/api/v2/workflow_job_templates/"
 
     with get_ansible_client() as client:
-        if ask_requested:
+        if requested:
             error = _check_prompt_on_launch_capability(
-                client, endpoint, "POST", ["ask_variables_on_launch"]
+                client, endpoint, "POST", sorted(requested)
             )
             if error:
                 return error
@@ -266,17 +301,16 @@ def create_workflow_template(
             data["limit"] = limit
         if scm_branch is not None:
             data["scm_branch"] = scm_branch
-        if ask_requested:
-            data["ask_variables_on_launch"] = ask_variables_on_launch
+        data.update(requested)
         response = client.request("POST", endpoint, data=data)
-        if not ask_requested:
+        if not requested:
             return json.dumps(response, indent=2)
         return _verify_prompt_on_launch_write(
             client,
             template_id=response.get("id") if isinstance(response, dict) else None,
             endpoint=endpoint,
             action="POST",
-            requested={"ask_variables_on_launch": ask_variables_on_launch},
+            requested=requested,
         )
 
 
@@ -292,19 +326,28 @@ def update_workflow_template(
     limit: str = None,
     scm_branch: str = None,
     ask_variables_on_launch: bool | None = None,
+    ask_inventory_on_launch: bool | None = None,
+    ask_limit_on_launch: bool | None = None,
+    ask_scm_branch_on_launch: bool | None = None,
+    ask_labels_on_launch: bool | None = None,
+    ask_skip_tags_on_launch: bool | None = None,
+    ask_tags_on_launch: bool | None = None,
 ) -> str:
     """Update an existing AWX workflow template.
 
     Use this to change orchestration-level defaults used by future launch_workflow runs.
     For single-playbook template updates, use update_job_template instead.
 
-    Prompt on Launch (tri-state): when ask_variables_on_launch is True or False
-    the tool first confirms via workflow-template OPTIONS metadata that the
-    field is writable for update, sends exactly one PATCH, then reads the
-    top-level workflow template back to verify the persisted value. This flag
-    only authorises launch-time extra_vars for the workflow; it is not an AWX
-    survey and does not set default extra_vars. Omitted leaves the existing
-    value unchanged.
+    Prompt on Launch (tri-state): the ask_*_on_launch arguments below follow a
+    single pattern. Supplying True or False makes the tool confirm via
+    workflow-template OPTIONS metadata that every supplied field is writable
+    for update, send exactly one PATCH, then read the top-level workflow
+    template back to verify each persisted value. If any requested field is
+    unsupported, ambiguous or non-writable, the whole request is rejected
+    before any write. These flags only authorise launch-time overrides; they
+    are not AWX surveys and store no values. Omitted fields keep the existing
+    value. Workflow templates do not support every job-template prompt flag;
+    only flags natively available to the workflow resource are accepted here.
 
     Args:
         template_id: ID of the workflow template
@@ -318,23 +361,38 @@ def update_workflow_template(
             (from list_inventories)
         limit: Default host limit pattern for nodes that prompt on launch
         scm_branch: Default SCM branch for nodes that prompt on launch
-        ask_variables_on_launch: Prompt on Launch for extra variables. True
-            enables, False disables, omitted keeps the current value. Explicit
-            values are capability-checked against workflow metadata before
-            writing and verified after.
+        ask_variables_on_launch: Prompt for extra variables at launch. True
+            enables, False disables, omitted keeps the current value.
+        ask_inventory_on_launch: Prompt for inventory at launch. This
+            configures permission to override the workflow inventory, not its
+            contents.
+        ask_limit_on_launch: Prompt for host limit at launch. This configures
+            permission to override the limit, not a limit value.
+        ask_scm_branch_on_launch: Prompt for SCM branch at launch.
+        ask_labels_on_launch: Prompt for labels at launch.
+        ask_skip_tags_on_launch: Prompt for job tags to skip at launch.
+        ask_tags_on_launch: Prompt for job tags at launch.
     """
     if extra_vars is not None:
         error = validate_json_str(extra_vars, "extra_vars")
         if error:
             return error
 
-    ask_requested = ask_variables_on_launch is not None
+    requested = _collect_prompt_on_launch_flags(
+        ask_variables_on_launch=ask_variables_on_launch,
+        ask_inventory_on_launch=ask_inventory_on_launch,
+        ask_limit_on_launch=ask_limit_on_launch,
+        ask_scm_branch_on_launch=ask_scm_branch_on_launch,
+        ask_labels_on_launch=ask_labels_on_launch,
+        ask_skip_tags_on_launch=ask_skip_tags_on_launch,
+        ask_tags_on_launch=ask_tags_on_launch,
+    )
     endpoint = f"/api/v2/workflow_job_templates/{template_id}/"
 
     with get_ansible_client() as client:
-        if ask_requested:
+        if requested:
             error = _check_prompt_on_launch_capability(
-                client, endpoint, "PATCH", ["ask_variables_on_launch"]
+                client, endpoint, "PATCH", sorted(requested)
             )
             if error:
                 return error
@@ -356,18 +414,17 @@ def update_workflow_template(
             data["limit"] = limit
         if scm_branch is not None:
             data["scm_branch"] = scm_branch
-        if ask_requested:
-            data["ask_variables_on_launch"] = ask_variables_on_launch
+        data.update(requested)
 
         response = client.request("PATCH", endpoint, data=data)
-        if not ask_requested:
+        if not requested:
             return json.dumps(response, indent=2)
         return _verify_prompt_on_launch_write(
             client,
             template_id=template_id,
             endpoint=endpoint,
             action="PATCH",
-            requested={"ask_variables_on_launch": ask_variables_on_launch},
+            requested=requested,
         )
 
 
