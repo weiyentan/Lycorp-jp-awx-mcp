@@ -6,9 +6,14 @@ on:
     tags: ["v*.*.*"]
   pull_request:
     branches: [main]
+  workflow_dispatch:
 
 permissions:
   contents: read
+
+concurrency:
+  group: publish-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build:
@@ -62,33 +67,72 @@ jobs:
         if: github.event_name != 'pull_request'
         run: |
           set -euo pipefail
-          SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-7)
-          # Prefer sha tag for verification; fallback to inspecting metadata outputs
-          IMAGE="ghcr.io/weiyentan/lycorp-jp-awx-mcp:sha-${SHORT_SHA}"
-          # On tag builds the semver tag may be more canonical, also verify latest if on main
+
+          # GHCR can be eventually consistent right after a push, so retry
+          # the pull a bounded number of times before failing.
+          pull_with_retry() {
+            local image="$1" attempt
+            for attempt in $(seq 1 6); do
+              if docker pull "$image"; then
+                return 0
+              fi
+              if [ "$attempt" -eq 6 ]; then
+                return 1
+              fi
+              echo "Pull failed; retrying in 5s (attempt ${attempt}/6)..."
+              sleep 5
+            done
+          }
+
+          # Derive the sha tag from the metadata action output instead of
+          # rebuilding it from github.sha (no implicit 7-char SHA coupling;
+          # DOCKER_METADATA_SHORT_SHA_LENGTH may change the length).
+          IMAGE=$(echo "${{ steps.meta.outputs.tags }}" \
+            | tr ',' '\n' \
+            | grep -E ':sha-' \
+            | head -n1 || true)
+          if [ -z "$IMAGE" ]; then
+            echo "::error::No sha-* tag found in metadata outputs"
+            exit 1
+          fi
+
+          echo "Verifying image: $IMAGE"
+          if ! pull_with_retry "$IMAGE"; then
+            echo "::error::Could not pull $IMAGE after 6 attempts"
+            exit 1
+          fi
+
+          # On tag builds, also verify the semver tag. The sha tag above
+          # remains the primary verification target; a semver pull failure
+          # is surfaced as a warning rather than a silent fallback.
           if [ "${{ github.ref_type }}" = "tag" ]; then
             VERSION="${{ github.ref_name }}"
             # strip leading v for naked version check
             NAKED="${VERSION#v}"
-            if docker pull "ghcr.io/weiyentan/lycorp-jp-awx-mcp:${NAKED}" 2>/dev/null; then
-              IMAGE="ghcr.io/weiyentan/lycorp-jp-awx-mcp:${NAKED}"
+            SEMVER_IMAGE="ghcr.io/weiyentan/lycorp-jp-awx-mcp:${NAKED}"
+            echo "Also verifying semver tag: $SEMVER_IMAGE"
+            if ! pull_with_retry "$SEMVER_IMAGE"; then
+              echo "::warning::Could not pull semver tag ${SEMVER_IMAGE}"
             fi
           fi
-          echo "Verifying image: $IMAGE"
-          docker pull "$IMAGE"
+
           # Smoke test 1: image can run --help (no network needed)
-          docker run --rm --entrypoint="" "$IMAGE" uv run --no-sync awx-mcp --help
+          docker run --rm --entrypoint="" "$IMAGE" \
+            uv run --no-sync awx-mcp --help
           # Smoke test 2: start server and probe HTTP endpoint
           docker run -d --name awx-mcp-verify \
             -e ANSIBLE_BASE_URL=https://awx.example.com \
             -e ANSIBLE_TOKEN=dummy-token-for-verify \
             -p 8000:8000 \
             "$IMAGE"
-          # Wait for server to become reachable (any HTTP response counts as healthy)
+          # Wait for server to become reachable
+          # (any HTTP response counts as healthy)
           for i in $(seq 1 15); do
-            STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:8000/mcp || true)
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+              http://127.0.0.1:8000/mcp || true)
             if [ "$STATUS" != "000" ] && [ -n "$STATUS" ]; then
-              echo "Server responded with HTTP $STATUS after $i attempt(s) - healthy"
+              echo "Server responded with HTTP $STATUS" \
+                "after $i attempt(s) - healthy"
               break
             fi
             if [ "$i" -eq 15 ]; then
@@ -100,7 +144,8 @@ jobs:
             sleep 2
           done
           docker logs awx-mcp-verify || true
-          if [ "$(docker inspect -f '{{.State.Running}}' awx-mcp-verify)" != "true" ]; then
+          RUNNING=$(docker inspect -f '{{.State.Running}}' awx-mcp-verify)
+          if [ "$RUNNING" != "true" ]; then
             echo "::error::Container is not running"
             docker logs awx-mcp-verify || true
             docker rm -f awx-mcp-verify || true
