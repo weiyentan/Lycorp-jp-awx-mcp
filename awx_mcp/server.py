@@ -37,13 +37,12 @@ if os.environ.get("AWX_MCP_TRANSPORT"):
         "runs the local stdio server."
     )
 
-# Authentication mode — an internal channel set by the CLI in __init__.main(),
-# NOT a user-facing setting:
-#   static      -> this process authenticates to AWX with its own env
-#                  credentials (ANSIBLE_TOKEN / USERNAME+PASSWORD). Local mode.
-#   passthrough -> the process holds no credentials; each request carries the
-#                  caller's AWX token in the Authorization / X-AWX-Token header.
-#                  Central `--serve` mode.
+# Authentication mode — resolved by the CLI before importing this module.
+#   static      -> authenticate with the server's environment credentials.
+#                  Local stdio, or explicit loopback-only --serve for a trusted
+#                  single-tenant tunnel. Never expose the latter on a pod IP.
+#   passthrough -> each network request must carry the caller's AWX token.
+#                  This remains the default for shared --serve deployments.
 AUTH_MODE = os.environ.get("AWX_MCP_AUTH_MODE", "static").lower()
 if AUTH_MODE not in ("static", "passthrough"):
     raise ValueError(
