@@ -106,7 +106,8 @@ def main():
     # --- Server modes: set the internal channels BEFORE importing server ----
     if args.serve:
         effective_host = (
-            args.host if args.host is not None
+            args.host
+            if args.host is not None
             else os.environ.get("AWX_MCP_HOST", "127.0.0.1")
         )
         try:
