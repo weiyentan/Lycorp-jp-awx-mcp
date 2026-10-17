@@ -7,6 +7,26 @@ import os
 import sys
 
 
+def _resolve_serve_auth_mode(value: str | None, host: str) -> str:
+    """Choose network auth without silently exposing a shared AWX credential.
+
+    Normal --serve uses per-caller passthrough. Explicit static is reserved for
+    a single-tenant, loopback-bound server (e.g. a trusted same-pod MCP tunnel).
+    """
+    mode = "passthrough" if value is None else value.strip().lower()
+    if mode not in ("static", "passthrough"):
+        raise ValueError(
+            "AWX_MCP_AUTH_MODE must be 'static' or 'passthrough' for --serve."
+        )
+    if mode == "static" and host not in ("127.0.0.1", "localhost", "::1"):
+        raise ValueError(
+            "Static --serve authentication requires a loopback bind "
+            "(--host 127.0.0.1 or AWX_MCP_HOST=127.0.0.1); refusing "
+            "to expose the shared AWX credential on the network."
+        )
+    return mode
+
+
 def main():
     """Entry point for the awx-mcp command.
 
@@ -17,9 +37,10 @@ def main():
     * ``--remote <URL>`` client proxy: no local server; relays stdio to a
                          central awx-mcp, injecting the caller's ``ANSIBLE_TOKEN``
                          as an ``Authorization: Bearer`` header.
-    * ``--serve``        central multi-user server (streamable-http, or sse with
-                         ``--sse``) that authenticates each request with the
-                         caller's own token (passthrough).
+    * ``--serve``        network server (streamable-http, or sse with ``--sse``).
+                         Passthrough is the default (per-caller AWX token).
+                         Explicit ``AWX_MCP_AUTH_MODE=static`` is supported
+                         only when bound to loopback for a trusted tunnel.
 
     Heavy imports (``server``/``tools``/``proxy``) are deferred into the branch
     that needs them: proxy mode must not import ``server`` (which requires
@@ -84,7 +105,18 @@ def main():
 
     # --- Server modes: set the internal channels BEFORE importing server ----
     if args.serve:
-        os.environ["AWX_MCP_AUTH_MODE"] = "passthrough"
+        effective_host = (
+            args.host
+            if args.host is not None
+            else os.environ.get("AWX_MCP_HOST", "127.0.0.1")
+        )
+        try:
+            mode = _resolve_serve_auth_mode(
+                os.environ.get("AWX_MCP_AUTH_MODE"), effective_host
+            )
+        except ValueError as exc:
+            parser.error(str(exc))
+        os.environ["AWX_MCP_AUTH_MODE"] = mode
         transport = "sse" if args.sse else "streamable-http"
     else:
         # Guard: a stray AWX_MCP_AUTH_MODE env cannot turn on passthrough

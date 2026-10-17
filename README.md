@@ -257,7 +257,17 @@ export AWX_MCP_TLS_KEY=/etc/awx-mcp/key.pem
 uvx --from git+https://github.com/lycorp-jp/awx-mcp awx-mcp --serve --host 0.0.0.0 --port 8443        # add --sse for the sse transport
 ```
 
-`ANSIBLE_TOKEN` / `ANSIBLE_USERNAME` / `ANSIBLE_PASSWORD` are ignored in `--serve` mode (a warning is logged if set) — the server has no identity of its own.
+By default, `--serve` uses **passthrough**: `ANSIBLE_TOKEN` / `ANSIBLE_USERNAME` / `ANSIBLE_PASSWORD` on the server are ignored and each caller must provide their own AWX token.
+
+**Single-tenant tunnel deployment (fork extension).** To allow a trusted sidecar tunnel to use an AWX service token without passing it from the client, set `AWX_MCP_AUTH_MODE=static` **explicitly** and bind the MCP server to loopback (`--host 127.0.0.1` or `AWX_MCP_HOST=127.0.0.1`). The process refuses to start in static `--serve` mode if bound to `0.0.0.0` or any other non-loopback address, even with TLS. The tunnel sidecar connects via `http://127.0.0.1:8000/mcp` within the same Pod. Use an **in-container loopback exec** readiness/liveness probe: Kubernetes TCP probes from the node cannot reach a loopback-only listener inside the Pod. There is no Service or Ingress for this MCP endpoint.
+
+```bash
+AWX_MCP_AUTH_MODE=static ANSIBLE_BASE_URL=https://awx.example.com \
+  ANSIBLE_TOKEN=your_service_token \
+  awx-mcp --serve --host 127.0.0.1 --port 8000
+```
+
+Static tunnel mode uses **one shared AWX service identity** for every tool call; it does not provide per-caller AWX identity or RBAC. Restrict access to the tunnel, scope the AWX token's permissions, and do not expose the Pod port to other workloads. Never use static mode for a shared multi-user network server.
 
 ### 3. Central server — user (`--remote`)
 
