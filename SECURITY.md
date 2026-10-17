@@ -20,6 +20,24 @@ MCP client (LLM) <-> MCP server (this process) <-> AWX REST API
 The server itself is trusted; the LLM is untrusted input. AWX enforces its
 own RBAC on every API call using the configured token.
 
+### Single-tenant loopback tunnel mode (explicit `AWX_MCP_AUTH_MODE=static`)
+
+This fork permits `--serve` with a shared environment AWX token **only** when
+the HTTP listener binds to `127.0.0.1`, `::1` or `localhost`. A non-loopback
+bind is rejected at startup (not merely warned about). Intended topology:
+MCP server and a trusted OpenAI tunnel sidecar in one Kubernetes Pod, with the
+sidecar forwarding to `http://127.0.0.1:8000/mcp`. Do not create an Ingress,
+Service, hostPort, or port-forwarding route to this listener.
+
+**This is service-account delegation, not per-user authentication.** Every
+tunnel caller obtains whatever privileges the static AWX service token has;
+AWX cannot distinguish those callers. Restrict who may invoke the tunnel and
+give the service token the least necessary AWX RBAC. Kubernetes pod isolation
+must preserve loopback-only access. Use an exec-based loopback health probe,
+not a kubelet-to-Pod-IP TCP probe. A static credential supplied in environment
+is never used in passthrough mode and cannot act as a fallback for missing
+caller tokens.
+
 ### Central multi-user mode (`--serve` + `--remote`)
 
 `awx-mcp --serve` runs one shared server for many users. It holds **no** AWX
