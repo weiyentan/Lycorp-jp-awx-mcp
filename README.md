@@ -23,6 +23,7 @@ An MCP (Model Context Protocol) server that lets LLMs interact with AWX instance
 - [Compatibility](#compatibility)
 - [Features](#features)
 - [Installation](#installation)
+- [Container image](#container-image)
 - [Configuration](#configuration)
 - [Credential Management (opt-in)](#credential-management-opt-in)
 - [MCP Client Integration](#mcp-client-integration)
@@ -165,6 +166,56 @@ uvx --from git+https://github.com/lycorp-jp/awx-mcp awx-mcp --remote https://awx
 `--host`/`--port` apply to `--serve` and override `AWX_MCP_HOST` / `AWX_MCP_PORT`. There is no `--transport` flag (removed — see [CHANGELOG](CHANGELOG.md)).
 
 > For local mode you normally let the MCP client launch the process automatically (see [MCP Client Integration](#mcp-client-integration)) rather than running it by hand.
+
+---
+
+## Container image
+
+Pre-built images are published to GitHub Container Registry (GHCR) on every push to `main` and on version tags. No credentials are embedded in the image.
+
+**Image name:** `ghcr.io/weiyentan/lycorp-jp-awx-mcp`
+
+**Available tags:**
+
+| Tag | When published | Example |
+|-----|---------------|---------|
+| `latest` | Every successful build on `main` | `ghcr.io/weiyentan/lycorp-jp-awx-mcp:latest` |
+| `sha-<short-sha>` | Every build on `main` and on version tags | `ghcr.io/weiyentan/lycorp-jp-awx-mcp:sha-abc1234` |
+| `v24.6.1`, `24.6.1`, `24.6`, `24` | Version tag `v*.*.*` | `ghcr.io/weiyentan/lycorp-jp-awx-mcp:24.6.1` |
+
+Pull requests build the image for validation only and do not publish.
+
+**Pull and run:**
+
+```bash
+# Pull the latest image
+docker pull ghcr.io/weiyentan/lycorp-jp-awx-mcp:latest
+
+# Run as central server (streamable-http on :8000/mcp)
+docker run --rm -p 8000:8000 \
+  -e ANSIBLE_BASE_URL=https://awx.example.com \
+  -e ANSIBLE_TOKEN=your_api_token \
+  ghcr.io/weiyentan/lycorp-jp-awx-mcp:latest
+
+# Pin to a specific version
+docker pull ghcr.io/weiyentan/lycorp-jp-awx-mcp:24.6.1
+docker run --rm -p 8000:8000 \
+  -e ANSIBLE_BASE_URL=https://awx.example.com \
+  -e ANSIBLE_TOKEN=your_api_token \
+  ghcr.io/weiyentan/lycorp-jp-awx-mcp:24.6.1
+```
+
+Images are built from the repository's `Dockerfile` (`python:3.11-slim`, runs as `app:10001`, `HEALTHCHECK` on `:8000/mcp`). To verify a published image starts correctly:
+
+```bash
+docker pull ghcr.io/weiyentan/lycorp-jp-awx-mcp:sha-<short-sha>
+docker run -d --name awx-mcp-verify -p 8000:8000 \
+  -e ANSIBLE_BASE_URL=https://awx.example.com \
+  -e ANSIBLE_TOKEN=dummy \
+  ghcr.io/weiyentan/lycorp-jp-awx-mcp:sha-<short-sha>
+curl -i http://127.0.0.1:8000/mcp  # any HTTP response (e.g. 400/406) proves the process is up
+docker rm -f awx-mcp-verify
+```
 
 ---
 
