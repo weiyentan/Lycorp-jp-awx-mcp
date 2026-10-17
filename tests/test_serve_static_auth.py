@@ -38,6 +38,8 @@ def test_serve_static_writes_mode_before_server_start(monkeypatch):
     from awx_mcp import server
 
     monkeypatch.setenv("AWX_MCP_AUTH_MODE", "static")
+    # main() mutates this global channel; register its original value for cleanup.
+    monkeypatch.setenv("AWX_MCP_EFFECTIVE_TRANSPORT", "stdio")
     monkeypatch.setattr(sys, "argv", ["awx-mcp", "--serve", "--host", "127.0.0.1"])
     monkeypatch.setattr(server.mcp, "streamable_http_app", lambda **_: MagicMock())
     run = MagicMock()
@@ -52,7 +54,10 @@ def test_serve_static_writes_mode_before_server_start(monkeypatch):
 def test_serve_without_explicit_mode_stays_passthrough(monkeypatch):
     from awx_mcp import server
 
-    monkeypatch.delenv("AWX_MCP_AUTH_MODE", raising=False)
+    # Track the original values even though main() writes directly to os.environ.
+    monkeypatch.setenv("AWX_MCP_AUTH_MODE", "static")
+    monkeypatch.delenv("AWX_MCP_AUTH_MODE")
+    monkeypatch.setenv("AWX_MCP_EFFECTIVE_TRANSPORT", "stdio")
     monkeypatch.setattr(sys, "argv", ["awx-mcp", "--serve", "--host", "0.0.0.0"])
     monkeypatch.setattr(server.mcp, "streamable_http_app", lambda **_: MagicMock())
     run = MagicMock()
