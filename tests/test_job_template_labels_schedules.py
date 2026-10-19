@@ -24,8 +24,9 @@ def test_list_template_labels_scoped_and_paginated(fake_client):
         result = json.loads(labels_mod.list_template_labels(44, limit=5, offset=10))
 
     fake_client.request.assert_called_once_with(
-        "GET", "/api/v2/job_templates/44/labels/",
-        params={"limit": 5, "offset": 10},
+        "GET",
+        "/api/v2/job_templates/44/labels/",
+        params={"page_size": 5, "page": 3},
     )
     assert result == {
         "count": 1,
@@ -54,7 +55,8 @@ def test_disassociate_label_does_not_delete_resource(fake_client):
         result = json.loads(labels_mod.disassociate_label_from_template(44, 17))
 
     fake_client.request.assert_called_once_with(
-        "POST", "/api/v2/job_templates/44/labels/",
+        "POST",
+        "/api/v2/job_templates/44/labels/",
         data={"id": 17, "disassociate": True},
     )
     assert result["status"] == "success"
@@ -66,9 +68,11 @@ def test_create_schedule_explicit_enabled_state(fake_client, enabled):
         schedules_mod, "get_ansible_client", new=fake_client_factory(fake_client)
     ):
         schedules_mod.create_schedule(
-            name="cleanup", unified_job_template_id=44,
+            name="cleanup",
+            unified_job_template_id=44,
             rrule="DTSTART:20261024T090000Z RRULE:FREQ=WEEKLY",
-            extra_data='{"dry_run": true}', enabled=enabled,
+            extra_data='{"dry_run": true}',
+            enabled=enabled,
         )
 
     method, endpoint = fake_client.request.call_args.args
@@ -84,7 +88,8 @@ def test_create_schedule_omitted_enabled_uses_awx_default(fake_client):
         schedules_mod, "get_ansible_client", new=fake_client_factory(fake_client)
     ):
         schedules_mod.create_schedule(
-            name="cleanup", unified_job_template_id=44,
+            name="cleanup",
+            unified_job_template_id=44,
             rrule="DTSTART:20261024T090000Z RRULE:FREQ=WEEKLY",
         )
     assert "enabled" not in fake_client.request.call_args.kwargs["data"]
@@ -132,9 +137,11 @@ def test_invalid_schedule_extra_data_does_not_write(fake_client, operation):
     ):
         if operation == "create":
             output = schedules_mod.create_schedule(
-                name="cleanup", unified_job_template_id=44,
+                name="cleanup",
+                unified_job_template_id=44,
                 rrule="DTSTART:20261024T090000Z RRULE:FREQ=WEEKLY",
-                extra_data="not-json{", enabled=False,
+                extra_data="not-json{",
+                enabled=False,
             )
         else:
             output = schedules_mod.update_schedule(

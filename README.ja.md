@@ -4,14 +4,14 @@
 
 ![Python](https://img.shields.io/badge/Python-≥3.10-3776AB?logo=python&logoColor=white)
 ![License](https://img.shields.io/badge/License-Apache_2.0-blue)
-![MCP Tools](https://img.shields.io/badge/MCP_Tools-145-blue)
+![MCP Tools](https://img.shields.io/badge/MCP_Tools-148-blue)
 ![AWX](https://img.shields.io/badge/AWX-24.x-EE0000?logo=redhat&logoColor=white)
 
 LLM が AWX インスタンスと連携できるようにする MCP（Model Context Protocol）サーバーです。
 
-**145 個のツール**でインベントリ、ホスト、プロジェクト、ジョブテンプレート、ワークフロー、認証情報、実行環境、RBAC、システム管理など AWX のすべての主要機能をカバーします。
+**148 個のツール**でインベントリ、ホスト、プロジェクト、ジョブテンプレート、ワークフロー、認証情報、実行環境、RBAC、システム管理など AWX のすべての主要機能をカバーします。
 
-> デフォルトでは 141 個のツールが登録されます。残り 4 個（`create_credential`、`update_credential`、`create_user`、`update_user`）は Form mode elicitation で機密データを収集するため、`AWX_MCP_ENABLE_CREDENTIAL_MANAGEMENT=true` を設定した場合のみ有効化されます。詳細は [Credential Management (opt-in)](#credential-management-opt-in) を参照してください。
+> デフォルトでは 144 個のツールが登録されます。残り 4 個（`create_credential`、`update_credential`、`create_user`、`update_user`）は Form mode elicitation で機密データを収集するため、`AWX_MCP_ENABLE_CREDENTIAL_MANAGEMENT=true` を設定した場合のみ有効化されます。詳細は [Credential Management (opt-in)](#credential-management-opt-in) を参照してください。
 
 ---
 
@@ -87,7 +87,7 @@ flowchart LR
     User([ユーザー])
     LLM[LLM<br/>Claude / GPT など]
     MCP[MCP Client<br/>Claude Desktop<br/>Claude Code<br/>Cline など]
-    AWX_MCP["AWX MCP Server<br/>(awx-mcp)<br/>145 ツール (デフォルト 141 + opt-in 4)"]
+    AWX_MCP["AWX MCP Server<br/>(awx-mcp)<br/>148 ツール (デフォルト 144 + opt-in 4)"]
     AWX[AWX<br/>REST API v2]
 
     User -- 自然言語リクエスト --> LLM
@@ -323,7 +323,7 @@ uvx --from git+https://github.com/lycorp-jp/awx-mcp awx-mcp --serve --host 0.0.0
 
 ## Credential Management (opt-in)
 
-4 つのツール — `create_credential`、`update_credential`、`create_user`、`update_user` — は **Form mode elicitation** でパスワードや認証情報入力などの機密データを収集します。これらはデフォルトでは**登録されない**ため、デフォルトの 141 ツール構成は機密データを扱うツールを一切公開しません。
+4 つのツール — `create_credential`、`update_credential`、`create_user`、`update_user` — は **Form mode elicitation** でパスワードや認証情報入力などの機密データを収集します。これらはデフォルトでは**登録されない**ため、デフォルトの 144 ツール構成は機密データを扱うツールを一切公開しません。
 
 有効化するには以下を設定してください:
 
@@ -499,7 +499,7 @@ MCP クライアント（Claude など）に自然言語でリクエストする
 
 ## ツール一覧
 
-合計 **145 個**のツールを 20 モジュールで提供します。デフォルトでは 141 個が登録され、以下の **opt-in** とマークされた 4 つは `AWX_MCP_ENABLE_CREDENTIAL_MANAGEMENT=true` の場合のみ公開されます（[Credential Management (opt-in)](#credential-management-opt-in) 参照）。
+合計 **148 個**のツールを 20 モジュールで提供します。デフォルトでは 144 個が登録され、以下の **opt-in** とマークされた 4 つは `AWX_MCP_ENABLE_CREDENTIAL_MANAGEMENT=true` の場合のみ公開されます（[Credential Management (opt-in)](#credential-management-opt-in) 参照）。
 
 ### 名前で検索する
 
@@ -523,7 +523,7 @@ list_projects(project_name="platform")          -> "platform" に一致するプ
 テンプレートで照会します。
 
 <details>
-<summary><strong>145個すべてのツールを表示</strong></summary>
+<summary><strong>148個すべてのツールを表示</strong></summary>
 
 ### インベントリ & インベントリソース管理（14）- `inventories.py`
 
@@ -728,12 +728,15 @@ list_projects(project_name="platform")          -> "platform" に一致するプ
 | `get_notification_template` | 特定の通知テンプレートの詳細を取得 |
 | `test_notification_template` | テスト通知を送信 |
 
-### ラベル管理（2）- `labels.py`
+### ラベル管理（5）- `labels.py`
 
 | ツール | 説明 |
 |--------|------|
 | `list_labels` | ラベル一覧 |
 | `create_label` | 新しいラベルを作成 |
+| `list_template_labels` | ジョブテンプレートに付与されたラベル一覧 |
+| `associate_label_with_template` | 既存のラベルをジョブテンプレートに付与 |
+| `disassociate_label_from_template` | ジョブテンプレートからラベルを剥奪 |
 
 ### RBAC ロール管理（7）- `rbac.py`
 

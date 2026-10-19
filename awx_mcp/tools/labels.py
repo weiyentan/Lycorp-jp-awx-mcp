@@ -71,9 +71,7 @@ def create_label(name: str, organization_id: int) -> str:
 
 
 @read_tool
-def list_template_labels(
-    template_id: int, limit: int = 20, offset: int = 0
-) -> str:
+def list_template_labels(template_id: int, limit: int = 20, offset: int = 0) -> str:
     """List labels attached to an AWX job template.
 
     Unlike list_labels (the organization-wide label catalog), this returns

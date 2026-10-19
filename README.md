@@ -384,7 +384,7 @@ The `auth_mode` field is `static` (local) or `passthrough` (`--serve`). The `tra
 
 ## Credential Management (opt-in)
 
-Four tools — `create_credential`, `update_credential`, `create_user`, `update_user` — collect sensitive data (passwords, credential inputs) via **Form-mode elicitation**. They are **not registered** by default, so the default 141-tool surface exposes nothing that handles sensitive data.
+Four tools — `create_credential`, `update_credential`, `create_user`, `update_user` — collect sensitive data (passwords, credential inputs) via **Form-mode elicitation**. They are **not registered** by default, so the default 144-tool surface exposes nothing that handles sensitive data.
 
 To enable them, set:
 
@@ -735,7 +735,7 @@ single-request workflow behaviour with no `OPTIONS` or verification `GET`.
 
 ## Tools
 
-**148 tools** across 20 modules. By default 141 are registered; the 4 marked **opt-in** below appear only when `AWX_MCP_ENABLE_CREDENTIAL_MANAGEMENT=true` (see [Credential Management](#credential-management-opt-in)).
+**148 tools** across 20 modules. By default 144 are registered; the 4 marked **opt-in** below appear only when `AWX_MCP_ENABLE_CREDENTIAL_MANAGEMENT=true` (see [Credential Management](#credential-management-opt-in)).
 
 ### Searching by name
 
@@ -758,7 +758,7 @@ execution-record listings (`list_jobs`, `list_project_updates`, and similar),
 which are queried by status and parent template instead.
 
 <details>
-<summary><strong>Show all 145 tools</strong></summary>
+<summary><strong>Show all 148 tools</strong></summary>
 
 ### Inventories & Inventory Sources (14) - `inventories.py`
 
@@ -963,12 +963,15 @@ which are queried by status and parent template instead.
 | `get_notification_template` | Get details of a specific notification template |
 | `test_notification_template` | Send a test notification |
 
-### Label Management (2) - `labels.py`
+### Label Management (5) - `labels.py`
 
 | Tool | Description |
 |------|-------------|
 | `list_labels` | List labels |
 | `create_label` | Create a new label |
+| `list_template_labels` | List labels attached to a job template |
+| `associate_label_with_template` | Attach an existing label to a job template |
+| `disassociate_label_from_template` | Remove a label association from a job template |
 
 ### RBAC Role Management (7) - `rbac.py`
 
