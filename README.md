@@ -2,16 +2,16 @@
 
 ![Python](https://img.shields.io/badge/Python-≥3.10-3776AB?logo=python&logoColor=white)
 ![License](https://img.shields.io/badge/License-Apache_2.0-blue)
-![MCP Tools](https://img.shields.io/badge/MCP_Tools-145-blue)
+![MCP Tools](https://img.shields.io/badge/MCP_Tools-148-blue)
 ![AWX](https://img.shields.io/badge/AWX-24.x-EE0000?logo=redhat&logoColor=white)
 
 An MCP (Model Context Protocol) server that lets LLMs interact with AWX instances.
 
 [🇰🇷 한국어](README.ko.md) | [🇯🇵 日本語](README.ja.md)
 
-**145 tools** covering every major AWX capability: inventories, hosts, projects, job templates, workflows, credentials, execution environments, RBAC, and system administration.
+**148 tools** covering every major AWX capability: inventories, hosts, projects, job templates, workflows, credentials, execution environments, RBAC, and system administration.
 
-> 141 tools are enabled by default. The remaining 4 (`create_credential`, `update_credential`, `create_user`, `update_user`) collect sensitive data via Form-mode elicitation and are gated behind `AWX_MCP_ENABLE_CREDENTIAL_MANAGEMENT=true`. See [Credential Management](#credential-management-opt-in).
+> 144 tools are enabled by default. The remaining 4 (`create_credential`, `update_credential`, `create_user`, `update_user`) collect sensitive data via Form-mode elicitation and are gated behind `AWX_MCP_ENABLE_CREDENTIAL_MANAGEMENT=true`. See [Credential Management](#credential-management-opt-in).
 
 ---
 
@@ -88,7 +88,7 @@ flowchart LR
     User([User])
     LLM[LLM<br/>Claude / GPT / etc.]
     MCP[MCP Client<br/>Claude Desktop<br/>Claude Code<br/>Cline / etc.]
-    AWX_MCP["AWX MCP Server<br/>(awx-mcp)<br/>145 tools (141 default + 4 opt-in)"]
+    AWX_MCP["AWX MCP Server<br/>(awx-mcp)<br/>148 tools (144 default + 4 opt-in)"]
     AWX[AWX<br/>REST API v2]
 
     User -- natural language request --> LLM
@@ -735,7 +735,7 @@ single-request workflow behaviour with no `OPTIONS` or verification `GET`.
 
 ## Tools
 
-**145 tools** across 20 modules. By default 141 are registered; the 4 marked **opt-in** below appear only when `AWX_MCP_ENABLE_CREDENTIAL_MANAGEMENT=true` (see [Credential Management](#credential-management-opt-in)).
+**148 tools** across 20 modules. By default 141 are registered; the 4 marked **opt-in** below appear only when `AWX_MCP_ENABLE_CREDENTIAL_MANAGEMENT=true` (see [Credential Management](#credential-management-opt-in)).
 
 ### Searching by name
 
