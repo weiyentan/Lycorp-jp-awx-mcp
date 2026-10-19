@@ -67,7 +67,7 @@ stdio process.
 All 4 credential/user write tools (`create_credential`, `update_credential`,
 `create_user`, `update_user`) are gated behind
 `AWX_MCP_ENABLE_CREDENTIAL_MANAGEMENT=true` (default: off). The default
-deployment registers 141 of 145 tools and exposes no tool that handles
+deployment registers 144 of 148 tools and exposes no tool that handles
 sensitive data.
 
 ## Sensitive Data

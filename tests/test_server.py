@@ -98,18 +98,18 @@ def test_truthy_aliases_register_gated_tools():
             assert name in tools, f"{name} should register for env value {value!r}"
 
 
-def test_default_total_tool_count_is_141():
-    # Credential management off: 145 total - 4 credential/user tools.
+def test_default_total_tool_count_is_144():
+    # Credential management off: 148 total - 4 credential/user tools.
     tools = _list_registered_tools(env_value=None)
-    assert len(tools) == 141, (
-        f"Expected 141 tools with credential management disabled, got {len(tools)}"
+    assert len(tools) == 144, (
+        f"Expected 144 tools with credential management disabled, got {len(tools)}"
     )
 
 
-def test_credential_management_enabled_tool_count_is_145():
+def test_credential_management_enabled_tool_count_is_148():
     tools = _list_registered_tools(env_value="true")
-    assert len(tools) == 145, (
-        f"Expected 145 tools with credential management enabled, got {len(tools)}"
+    assert len(tools) == 148, (
+        f"Expected 148 tools with credential management enabled, got {len(tools)}"
     )
 
 

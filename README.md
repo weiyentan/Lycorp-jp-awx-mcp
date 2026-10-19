@@ -2,16 +2,16 @@
 
 ![Python](https://img.shields.io/badge/Python-≥3.10-3776AB?logo=python&logoColor=white)
 ![License](https://img.shields.io/badge/License-Apache_2.0-blue)
-![MCP Tools](https://img.shields.io/badge/MCP_Tools-145-blue)
+![MCP Tools](https://img.shields.io/badge/MCP_Tools-148-blue)
 ![AWX](https://img.shields.io/badge/AWX-24.x-EE0000?logo=redhat&logoColor=white)
 
 An MCP (Model Context Protocol) server that lets LLMs interact with AWX instances.
 
 [🇰🇷 한국어](README.ko.md) | [🇯🇵 日本語](README.ja.md)
 
-**145 tools** covering every major AWX capability: inventories, hosts, projects, job templates, workflows, credentials, execution environments, RBAC, and system administration.
+**148 tools** covering every major AWX capability: inventories, hosts, projects, job templates, workflows, credentials, execution environments, RBAC, and system administration.
 
-> 141 tools are enabled by default. The remaining 4 (`create_credential`, `update_credential`, `create_user`, `update_user`) collect sensitive data via Form-mode elicitation and are gated behind `AWX_MCP_ENABLE_CREDENTIAL_MANAGEMENT=true`. See [Credential Management](#credential-management-opt-in).
+> 144 tools are enabled by default. The remaining 4 (`create_credential`, `update_credential`, `create_user`, `update_user`) collect sensitive data via Form-mode elicitation and are gated behind `AWX_MCP_ENABLE_CREDENTIAL_MANAGEMENT=true`. See [Credential Management](#credential-management-opt-in).
 
 ---
 
@@ -88,7 +88,7 @@ flowchart LR
     User([User])
     LLM[LLM<br/>Claude / GPT / etc.]
     MCP[MCP Client<br/>Claude Desktop<br/>Claude Code<br/>Cline / etc.]
-    AWX_MCP["AWX MCP Server<br/>(awx-mcp)<br/>145 tools (141 default + 4 opt-in)"]
+    AWX_MCP["AWX MCP Server<br/>(awx-mcp)<br/>148 tools (144 default + 4 opt-in)"]
     AWX[AWX<br/>REST API v2]
 
     User -- natural language request --> LLM
@@ -384,7 +384,7 @@ The `auth_mode` field is `static` (local) or `passthrough` (`--serve`). The `tra
 
 ## Credential Management (opt-in)
 
-Four tools — `create_credential`, `update_credential`, `create_user`, `update_user` — collect sensitive data (passwords, credential inputs) via **Form-mode elicitation**. They are **not registered** by default, so the default 141-tool surface exposes nothing that handles sensitive data.
+Four tools — `create_credential`, `update_credential`, `create_user`, `update_user` — collect sensitive data (passwords, credential inputs) via **Form-mode elicitation**. They are **not registered** by default, so the default 144-tool surface exposes nothing that handles sensitive data.
 
 To enable them, set:
 
@@ -514,6 +514,62 @@ Send natural language requests to your MCP client (Claude, etc.) and the server 
 "Rerun the failed job"
 -> relaunch_job(job_id=123)
 ```
+
+### Job-template labels and schedules
+
+AWX labels categorize job templates and other controller resources. They are **not**
+Ansible `job_tags` or `skip_tags` (execution filters). The MCP reuses the
+native job-template label association endpoint:
+
+```text
+"List labels attached to the cleanup job template"
+-> list_template_labels(template_id=44)
+
+"Attach our existing maintenance label to that template"
+-> list_labels(label_name="maintenance")
+-> associate_label_with_template(template_id=44, label_id=17)
+
+"Remove that label from the template"
+-> disassociate_label_from_template(template_id=44, label_id=17)
+```
+
+`list_labels` and `create_label` manage the label catalog; the three
+template-label tools above operate only on associations. Removing the final
+association can cause AWX to garbage-collect the label. Existing AWX RBAC,
+authentication and MCP read-only gating apply.
+
+Schedules are separate AWX resources linked to a *unified job template*. The
+existing `list_schedules`, `get_schedule`, `create_schedule`,
+`update_schedule` and `delete_schedule` tools work with job templates and
+workflow templates. Both create and update now accept an optional `enabled`
+Boolean:
+
+```text
+"Find recurring schedules for this job template"
+-> list_schedules(unified_job_template_id=44)
+
+"Create a paused weekly maintenance schedule"
+-> create_schedule(
+       name="Weekly maintenance",
+       unified_job_template_id=44,
+       rrule="DTSTART:20261024T090000Z RRULE:FREQ=WEEKLY;INTERVAL=1",
+       enabled=False,
+   )
+
+"Enable that schedule when the configuration is ready"
+-> update_schedule(schedule_id=33, enabled=True)
+
+"Pause it without losing its recurrence"
+-> update_schedule(schedule_id=33, enabled=False)
+```
+
+`enabled=True` starts future automatic launches; `False` suspends them.
+Omitting `enabled` on create retains the AWX default, and omitting it on
+update leaves the current state unchanged. Always inspect the selected
+schedule before changing it and verify the result with `get_schedule`.
+AWX may require Prompt on Launch variables or a survey before scheduled
+`extra_data` overrides are permitted. This change does not alter run-time
+launch tools or enable any schedule automatically on existing templates.
 
 ### Prompt on Launch configuration (job templates)
 
@@ -679,7 +735,7 @@ single-request workflow behaviour with no `OPTIONS` or verification `GET`.
 
 ## Tools
 
-**145 tools** across 20 modules. By default 141 are registered; the 4 marked **opt-in** below appear only when `AWX_MCP_ENABLE_CREDENTIAL_MANAGEMENT=true` (see [Credential Management](#credential-management-opt-in)).
+**148 tools** across 20 modules. By default 144 are registered; the 4 marked **opt-in** below appear only when `AWX_MCP_ENABLE_CREDENTIAL_MANAGEMENT=true` (see [Credential Management](#credential-management-opt-in)).
 
 ### Searching by name
 
@@ -702,7 +758,7 @@ execution-record listings (`list_jobs`, `list_project_updates`, and similar),
 which are queried by status and parent template instead.
 
 <details>
-<summary><strong>Show all 145 tools</strong></summary>
+<summary><strong>Show all 148 tools</strong></summary>
 
 ### Inventories & Inventory Sources (14) - `inventories.py`
 
@@ -907,12 +963,15 @@ which are queried by status and parent template instead.
 | `get_notification_template` | Get details of a specific notification template |
 | `test_notification_template` | Send a test notification |
 
-### Label Management (2) - `labels.py`
+### Label Management (5) - `labels.py`
 
 | Tool | Description |
 |------|-------------|
 | `list_labels` | List labels |
 | `create_label` | Create a new label |
+| `list_template_labels` | List labels attached to a job template |
+| `associate_label_with_template` | Attach an existing label to a job template |
+| `disassociate_label_from_template` | Remove a label association from a job template |
 
 ### RBAC Role Management (7) - `rbac.py`
 
