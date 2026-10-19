@@ -66,6 +66,7 @@ def create_schedule(
     rrule: str,
     description: str = "",
     extra_data: str = "{}",
+    enabled: bool | None = None,
 ) -> str:
     """Create an AWX schedule for recurring launches.
 
@@ -81,6 +82,8 @@ def create_schedule(
             (e.g., "DTSTART:20231001T120000Z RRULE:FREQ=DAILY;INTERVAL=1")
         description: Schedule description and intent
         extra_data: JSON string of extra vars passed at each scheduled launch
+        enabled: True to activate, False to create paused; omitted uses the
+            AWX default. This is a schedule toggle, not a job template setting.
     """
     parsed_extra, error = parse_json_str(extra_data, "extra_data")
     if error:
@@ -94,6 +97,8 @@ def create_schedule(
             "description": description,
             "extra_data": parsed_extra,
         }
+        if enabled is not None:
+            data["enabled"] = enabled
 
         response = client.request("POST", "/api/v2/schedules/", data=data)
         return json.dumps(response, indent=2)
@@ -106,6 +111,7 @@ def update_schedule(
     rrule: str = None,
     description: str = None,
     extra_data: str = None,
+    enabled: bool | None = None,
 ) -> str:
     """Update an AWX schedule.
 
@@ -119,6 +125,8 @@ def update_schedule(
         rrule: New iCal recurrence rule
         description: New schedule description
         extra_data: JSON string of updated extra vars for launches
+        enabled: True resumes scheduled launches; False pauses them;
+            omitted preserves the current enabled state.
     """
     parsed_extra = None
     if extra_data is not None:
@@ -136,6 +144,8 @@ def update_schedule(
             data["description"] = description
         if parsed_extra is not None:
             data["extra_data"] = parsed_extra
+        if enabled is not None:
+            data["enabled"] = enabled
 
         response = client.request(
             "PATCH", f"/api/v2/schedules/{schedule_id}/", data=data
