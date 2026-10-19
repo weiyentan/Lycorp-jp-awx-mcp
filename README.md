@@ -515,6 +515,62 @@ Send natural language requests to your MCP client (Claude, etc.) and the server 
 -> relaunch_job(job_id=123)
 ```
 
+### Job-template labels and schedules
+
+AWX labels categorize job templates and other controller resources. They are **not**
+Ansible `job_tags` or `skip_tags` (execution filters). The MCP reuses the
+native job-template label association endpoint:
+
+```text
+"List labels attached to the cleanup job template"
+-> list_template_labels(template_id=44)
+
+"Attach our existing maintenance label to that template"
+-> list_labels(label_name="maintenance")
+-> associate_label_with_template(template_id=44, label_id=17)
+
+"Remove that label from the template"
+-> disassociate_label_from_template(template_id=44, label_id=17)
+```
+
+`list_labels` and `create_label` manage the label catalog; the three
+template-label tools above operate only on associations. Removing the final
+association can cause AWX to garbage-collect the label. Existing AWX RBAC,
+authentication and MCP read-only gating apply.
+
+Schedules are separate AWX resources linked to a *unified job template*. The
+existing `list_schedules`, `get_schedule`, `create_schedule`,
+`update_schedule` and `delete_schedule` tools work with job templates and
+workflow templates. Both create and update now accept an optional `enabled`
+Boolean:
+
+```text
+"Find recurring schedules for this job template"
+-> list_schedules(unified_job_template_id=44)
+
+"Create a paused weekly maintenance schedule"
+-> create_schedule(
+       name="Weekly maintenance",
+       unified_job_template_id=44,
+       rrule="DTSTART:20261024T090000Z RRULE:FREQ=WEEKLY;INTERVAL=1",
+       enabled=False,
+   )
+
+"Enable that schedule when the configuration is ready"
+-> update_schedule(schedule_id=33, enabled=True)
+
+"Pause it without losing its recurrence"
+-> update_schedule(schedule_id=33, enabled=False)
+```
+
+`enabled=True` starts future automatic launches; `False` suspends them.
+Omitting `enabled` on create retains the AWX default, and omitting it on
+update leaves the current state unchanged. Always inspect the selected
+schedule before changing it and verify the result with `get_schedule`.
+AWX may require Prompt on Launch variables or a survey before scheduled
+`extra_data` overrides are permitted. This change does not alter run-time
+launch tools or enable any schedule automatically on existing templates.
+
 ### Prompt on Launch configuration (job templates)
 
 `create_job_template` and `update_job_template` accept optional tri-state
